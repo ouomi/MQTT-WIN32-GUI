@@ -1,0 +1,2 @@
+[default.extend-identifiers]
+mosquitto = "mosquitto" # Official Eclipse Mosquitto project and broker name.

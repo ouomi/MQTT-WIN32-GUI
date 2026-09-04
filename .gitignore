@@ -1,0 +1,10 @@
+MQTT-C/
+build/
+AI-output/
+mingw64-notls-release/
+mingw64-tls-release/
+mingw32-notls-release/
+mingw32-tls-release/
+release-artifacts/
+AGENTS.md
+scripts/publish-release.sh

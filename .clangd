@@ -1,0 +1,5 @@
+CompileFlags:
+  CompilationDatabase: build/mingw64-tls-release
+  Compiler: x86_64-w64-mingw32-g++
+  Add:
+    - --target=x86_64-w64-mingw32

@@ -1,0 +1,5 @@
+interface:
+  display_name: "Improve Codebase Architecture (Self-Contained Report)"
+  short_description: "Find architecture improvements without an external report template"
+policy:
+  allow_implicit_invocation: false

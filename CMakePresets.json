@@ -1,0 +1,84 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "mingw-release-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "mingw32-tls-release",
+      "displayName": "MinGW-w64 x86 TLS Release",
+      "inherits": "mingw-release-base",
+      "binaryDir": "${sourceDir}/build/mingw32-tls-release",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/mingw32-tls-release",
+        "CMAKE_TOOLCHAIN_FILE": "/opt/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/mingw32.cmake",
+        "VCPKG_TARGET_TRIPLET": "x86-mingw-dynamic",
+        "WIN32MQTT_ENABLE_TLS": "ON",
+        "WIN32MQTT_OPENSSL_DYNAMIC": "ON"
+      }
+    },
+    {
+      "name": "mingw64-tls-release",
+      "displayName": "MinGW-w64 x86_64 TLS Release",
+      "inherits": "mingw-release-base",
+      "binaryDir": "${sourceDir}/build/mingw64-tls-release",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/mingw64-tls-release",
+        "CMAKE_TOOLCHAIN_FILE": "/opt/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/mingw64.cmake",
+        "VCPKG_TARGET_TRIPLET": "x64-mingw-dynamic",
+        "WIN32MQTT_ENABLE_TLS": "ON",
+        "WIN32MQTT_OPENSSL_DYNAMIC": "ON"
+      }
+    },
+    {
+      "name": "mingw32-notls-release",
+      "displayName": "MinGW-w64 x86 TCP-only Release",
+      "inherits": "mingw-release-base",
+      "binaryDir": "${sourceDir}/build/mingw32-notls-release",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/mingw32-notls-release",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/mingw32.cmake",
+        "WIN32MQTT_ENABLE_TLS": "OFF",
+        "WIN32MQTT_OPENSSL_DYNAMIC": "OFF"
+      }
+    },
+    {
+      "name": "mingw64-notls-release",
+      "displayName": "MinGW-w64 x86_64 TCP-only Release",
+      "inherits": "mingw-release-base",
+      "binaryDir": "${sourceDir}/build/mingw64-notls-release",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/mingw64-notls-release",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/mingw64.cmake",
+        "WIN32MQTT_ENABLE_TLS": "OFF",
+        "WIN32MQTT_OPENSSL_DYNAMIC": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "mingw32-tls-release",
+      "configurePreset": "mingw32-tls-release"
+    },
+    {
+      "name": "mingw64-tls-release",
+      "configurePreset": "mingw64-tls-release"
+    },
+    {
+      "name": "mingw32-notls-release",
+      "configurePreset": "mingw32-notls-release"
+    },
+    {
+      "name": "mingw64-notls-release",
+      "configurePreset": "mingw64-notls-release"
+    }
+  ]
+}
