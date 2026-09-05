@@ -1,4 +1,5 @@
 #include "mqtt_session.h"
+#include "mqtt_topic.hpp"
 #include "mqtt_disconnect.hpp"
 #include "mqtt_connect_attempt.hpp"
 #include "mqtt_dns.hpp"
@@ -219,6 +220,10 @@ struct MqttSession::Impl {
                     const std::optional<MqttLastWill>& last_will,
                     MqttConnectAttempt::Cancellation cancellation) {
         if (stopped.load() || !cancellation || cancellation->cancelled.load()) return;
+        if (last_will && !IsValidPublishTopic(last_will->topic)) {
+            Fail("invalid MQTT Last Will topic");
+            return;
+        }
         connect_attempt.Begin(std::move(cancellation), MqttConnectAttempt::Clock::now());
         CloseSocket(); state = MqttConnectionState::Connecting;
         Emit(MqttEventType::StateChanged, state, FormatMqttEndpointUri(endpoint));
@@ -303,6 +308,11 @@ struct MqttSession::Impl {
         }
     }
     void Handle(Command command) {
+        if ((command.type == CommandType::Subscribe || command.type == CommandType::Unsubscribe) &&
+            !IsValidSubscriptionFilter(command.first)) {
+            Emit(MqttEventType::Log, state, "invalid MQTT subscription filter");
+            return;
+        }
         switch (command.type) {
         case CommandType::Connect:
             if (!command.cancellation || command.cancellation->cancelled.load()) break;
@@ -320,6 +330,11 @@ struct MqttSession::Impl {
         case CommandType::Subscribe: if (state == MqttConnectionState::Connected) mqtt_subscribe(&client, command.first.c_str(), 0); break;
         case CommandType::Unsubscribe: if (state == MqttConnectionState::Connected) mqtt_unsubscribe(&client, command.first.c_str()); break;
         case CommandType::Publish: {
+            if (!IsValidPublishTopic(command.first)) {
+                Emit(MqttEventType::PublishRejected, state, "invalid MQTT publish topic",
+                     std::move(command.first), std::move(command.second), command.qos);
+                break;
+            }
             if (state != MqttConnectionState::Connected) {
                 Emit(MqttEventType::PublishRejected, state, "not connected", std::move(command.first),
                      std::move(command.second), command.qos);

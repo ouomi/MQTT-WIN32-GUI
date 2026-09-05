@@ -222,6 +222,24 @@ static void test_receive_budget(void)
           "remaining buffered packets survive yielding");
 }
 
+static void test_empty_publish(void)
+{
+    unsigned qos;
+    for (qos = 0; qos <= 2; ++qos) {
+        struct fixture f;
+        struct mqtt_response response = {0};
+        setup(&f);
+        check(mqtt_publish(&f.client, "a", "", 0, (uint8_t)(qos << 1)) == MQTT_OK,
+              "empty payload queued without a subscription");
+        send_bytes(&f, sizeof(output));
+        check(output_size == (qos ? 7u : 5u), "empty PUBLISH wire length");
+        check(mqtt_unpack_response(&response, output, output_size) == (ssize_t)output_size,
+              "empty PUBLISH wire packet parses");
+        check(response.decoded.publish.application_message_size == 0 &&
+              response.decoded.publish.qos_level == qos, "empty payload and QoS preserved");
+    }
+}
+
 int main(void)
 {
     test_resume(0);
@@ -230,6 +248,7 @@ int main(void)
     test_compaction_and_reinit();
     test_receive();
     test_receive_budget();
+    test_empty_publish();
     puts("MQTT backpressure tests passed");
     return EXIT_SUCCESS;
 }

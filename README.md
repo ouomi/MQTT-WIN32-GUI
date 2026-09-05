@@ -57,7 +57,9 @@ TCP-only distribution directories contain `WIN32-MQTT.exe` and `LICENSES/`, have
 - Server URI and client identifier with real connect / disconnect state
 - Active subscriptions are sent after a successful CONNACK; changing a checkbox sends subscribe or unsubscribe while connected
 - An optional Last Will topic and payload can be configured before connecting
-- Published UTF-8 messages support QoS 0, 1, and 2
+- Publish to an independently entered topic without subscribing first; concrete active subscriptions are optional suggestions, and changing subscriptions preserves the typed destination
+- Published UTF-8 messages support QoS 0, 1, and 2, including empty payloads
+- Publish and Last Will topics reject wildcards; subscription filters allow whole-level `+` and final-level `#`. Topics must be valid UTF-8 without null characters and fit the 65535-byte MQTT string limit (the current packet buffer imposes a smaller overall send limit)
 - Received MQTT messages and connection errors appear in the event log
 - `mqtts://` requires TLS 1.2 or newer, certificate-chain validation, SNI, and hostname validation
 

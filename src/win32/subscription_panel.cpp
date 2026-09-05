@@ -1,4 +1,5 @@
 #include "subscription_panel.h"
+#include "../mqtt/mqtt_topic.hpp"
 
 #include <commctrl.h>
 #include <windowsx.h>
@@ -166,6 +167,12 @@ void SubscriptionPanel::Add(HWND owner, AppLanguage language,
         ShowClassicMessageBox(owner, Text(language, UiText::EnterTopicFirst).data(),
                               Text(language, UiText::ApplicationTitle).data(),
                               MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+
+    if (!IsValidSubscriptionFilter(topic)) {
+        ShowClassicMessageBox(owner, Text(language, UiText::InvalidSubscriptionFilter).data(),
+                              Text(language, UiText::ApplicationTitle).data(), MB_OK | MB_ICONINFORMATION);
         return;
     }
 

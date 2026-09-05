@@ -1,4 +1,5 @@
 #include "subscription_catalog.hpp"
+#include "mqtt/mqtt_topic.hpp"
 
 #include <algorithm>
 #include <utility>
@@ -21,7 +22,7 @@ std::size_t SubscriptionCatalog::Find(const std::wstring& topic) const noexcept 
 }
 
 bool SubscriptionCatalog::Add(std::wstring topic) {
-    if (topic.empty() || Find(topic) != npos) {
+    if (!IsValidSubscriptionFilter(topic) || Find(topic) != npos) {
         return false;
     }
     records_.push_back({std::move(topic), false});
@@ -47,7 +48,7 @@ bool SubscriptionCatalog::SetActive(std::size_t index, bool active) {
 void SubscriptionCatalog::Replace(std::vector<SubscriptionRecord> records) {
     records_.clear();
     for (SubscriptionRecord& record : records) {
-        if (!record.topic.empty() && Find(record.topic) == npos) {
+        if (IsValidSubscriptionFilter(record.topic) && Find(record.topic) == npos) {
             records_.push_back(std::move(record));
         }
     }

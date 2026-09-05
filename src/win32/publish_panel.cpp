@@ -3,6 +3,7 @@
 #include <string>
 
 #include "control_helpers.h"
+#include "../mqtt/mqtt_topic.hpp"
 #include "ui_ids.h"
 
 namespace win32mqtt {
@@ -24,7 +25,7 @@ void PublishPanel::Create(HWND parent, AppLanguage language) {
     payload_ = AddEdit(parent, IDC_PAYLOAD, Text(language, UiText::DefaultPayload).data(),
                        ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL);
     topic_label_ = AddText(parent, 60008, L"");
-    topic_ = AddControl(L"COMBOBOX", CBS_DROPDOWNLIST | WS_VSCROLL,
+    topic_ = AddControl(L"COMBOBOX", CBS_DROPDOWN | CBS_AUTOHSCROLL | WS_VSCROLL,
                         IDC_PUB_TOPIC, parent, WS_EX_CLIENTEDGE);
     qos_label_ = AddText(parent, 60009, L"");
     qos_ = AddControl(L"COMBOBOX", CBS_DROPDOWNLIST | WS_VSCROLL,
@@ -71,20 +72,13 @@ void PublishPanel::SetTopics(const std::vector<std::wstring>& topics) const {
     const std::wstring previously_selected = SelectedTopic();
     SendMessageW(topic_, CB_RESETCONTENT, 0, 0);
 
-    int selected_index = CB_ERR;
     for (const std::wstring& topic : topics) {
-        const int index = static_cast<int>(SendMessageW(
-            topic_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(topic.c_str())));
-        if (topic == previously_selected) {
-            selected_index = index;
+        if (IsValidPublishTopic(topic)) {
+            SendMessageW(topic_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(topic.c_str()));
         }
     }
-    if (selected_index == CB_ERR && !topics.empty()) {
-        selected_index = 0;
-    }
-    if (selected_index != CB_ERR) {
-        SendMessageW(topic_, CB_SETCURSEL, selected_index, 0);
-    }
+    // Suggestions must never replace a manually entered publishing destination.
+    SetWindowTextW(topic_, previously_selected.c_str());
 }
 
 bool PublishPanel::HandleCommand(HWND owner, AppLanguage language, WORD id, WORD notification,
@@ -102,8 +96,8 @@ bool PublishPanel::HandleCommand(HWND owner, AppLanguage language, WORD id, WORD
                               MB_OK | MB_ICONINFORMATION);
         return true;
     }
-    if (request.payload.empty()) {
-        ShowClassicMessageBox(owner, Text(language, UiText::EnterMessageBeforePublishing).data(),
+    if (!IsValidPublishTopic(request.topic)) {
+        ShowClassicMessageBox(owner, Text(language, UiText::InvalidPublishTopic).data(),
                               Text(language, UiText::ApplicationTitle).data(),
                               MB_OK | MB_ICONINFORMATION);
         request.topic.clear();
@@ -112,20 +106,7 @@ bool PublishPanel::HandleCommand(HWND owner, AppLanguage language, WORD id, WORD
 }
 
 std::wstring PublishPanel::SelectedTopic() const {
-    const int selected_index = static_cast<int>(SendMessageW(topic_, CB_GETCURSEL, 0, 0));
-    if (selected_index == CB_ERR) {
-        return L"";
-    }
-
-    const int length = static_cast<int>(SendMessageW(topic_, CB_GETLBTEXTLEN, selected_index, 0));
-    if (length == CB_ERR) {
-        return L"";
-    }
-
-    std::wstring value(static_cast<std::size_t>(length) + 1, L'\0');
-    SendMessageW(topic_, CB_GETLBTEXT, selected_index, reinterpret_cast<LPARAM>(value.data()));
-    value.resize(static_cast<std::size_t>(length));
-    return value;
+    return ControlText(topic_);
 }
 
 PublishQos PublishPanel::SelectedQos() const {

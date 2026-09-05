@@ -57,7 +57,8 @@ enum class UiText {
     PublishQueued,
     PublishRejected,
     SelectPublishTopic,
-    EnterMessageBeforePublishing,
+    InvalidPublishTopic,
+    InvalidSubscriptionFilter,
 };
 
 AppLanguage DefaultAppLanguage();

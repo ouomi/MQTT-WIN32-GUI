@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "mqtt/mqtt_endpoint.hpp"
+#include "mqtt/mqtt_topic.hpp"
 #include "subscription_catalog.hpp"
 
 namespace {
@@ -80,11 +81,49 @@ void TestSubscriptionCatalog() {
           "restore retains topic order");
 }
 
+void TestTopicValidation() {
+    using win32mqtt::IsValidPublishTopic;
+    using win32mqtt::IsValidSubscriptionFilter;
+    for (const auto* topic : {"a", "/", "a//b", " a ", "$SYS/status", "\xe4\xb8\xad\xe6\x96\x87"}) {
+        Check(IsValidPublishTopic(topic) && IsValidSubscriptionFilter(topic), "concrete topics accepted");
+    }
+    for (const auto* filter : {"#", "+", "/+", "a/+/#", "+/+/", "a//#"}) {
+        Check(IsValidSubscriptionFilter(filter), "whole-level wildcard filters accepted");
+        Check(!IsValidPublishTopic(filter), "wildcard filters cannot be published");
+    }
+    for (const auto* filter : {"", "a+", "a/#/b", "a/b#", "a/+b", "##", "a/++"}) {
+        Check(!IsValidSubscriptionFilter(filter), "invalid wildcard placement rejected");
+    }
+    Check(!IsValidPublishTopic(std::string("a\0b", 3)), "embedded null rejected");
+    for (const std::string& topic : {std::string("\xc0\x80"), std::string("\xed\xa0\x80"),
+                                    std::string("\xf4\x90\x80\x80"), std::string("\xe4\xb8"),
+                                    std::string("\x80"), std::string("\xc2x")}) {
+        Check(!IsValidPublishTopic(topic) && !IsValidSubscriptionFilter(topic), "malformed UTF-8 rejected");
+    }
+    Check(IsValidPublishTopic(std::string(65535, 'a')), "maximum topic byte length accepted");
+    Check(!IsValidPublishTopic(std::string(65536, 'a')), "oversize topic rejected");
+    Check(IsValidPublishTopic(std::wstring(21845, L'\u4e2d')), "UTF-8 length at 65535 bytes accepted");
+    Check(!IsValidPublishTopic(std::wstring(21846, L'\u4e2d')), "wide topic checked by UTF-8 bytes");
+    Check(IsValidPublishTopic(L"\U0001f600"), "supplementary Unicode topic accepted");
+    Check(!IsValidPublishTopic(std::wstring(1, static_cast<wchar_t>(0xd800))), "lone surrogate rejected");
+    Check(!IsValidPublishTopic(std::wstring(L"a\0b", 3)), "wide embedded null rejected");
+    Check(win32mqtt::topic_detail::Valid(std::u16string_view(u"\U0001f600/+"), true),
+          "UTF-16 surrogate pair decoded on native platform");
+    Check(!win32mqtt::topic_detail::Valid(std::u16string_view(u"\U0001f600/+"), false),
+          "UTF-16 wildcard rejected for publish");
+    win32mqtt::SubscriptionCatalog catalog;
+    Check(catalog.Add(L"sensors/+") && !catalog.Add(L"sensors/bad+"), "catalog validates filters");
+    catalog.Replace({{L"sensors/#", true}, {L"sensors/#/bad", true}, {L"sensors/+", false}});
+    Check(catalog.Size() == 2 && catalog.ActiveTopics() == std::vector<std::wstring>{L"sensors/#"},
+          "restored invalid filters excluded");
+}
+
 } // namespace
 
 int main() {
     TestEndpointParsing();
     TestSubscriptionCatalog();
+    TestTopicValidation();
     if (failures == 0) {
         std::cout << "All core module tests passed.\n";
     }

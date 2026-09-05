@@ -1,4 +1,5 @@
 #include "main_window.h"
+#include "../mqtt/mqtt_topic.hpp"
 
 #include <commctrl.h>
 #include <windowsx.h>
@@ -319,6 +320,11 @@ struct MainWindow::Impl {
                                       MB_OK | MB_ICONINFORMATION);
                 return;
             }
+            if (!IsValidPublishTopic(will_settings.topic)) {
+                ShowClassicMessageBox(window, Text(language, UiText::InvalidPublishTopic).data(),
+                                      Text(language, UiText::ApplicationTitle).data(), MB_OK | MB_ICONINFORMATION);
+                return;
+            }
             last_will = MqttLastWill{will_topic, WideToUtf8(will_settings.payload)};
         }
 
@@ -328,7 +334,7 @@ struct MainWindow::Impl {
     }
 
     void HandlePublishRequest(const PublishPanelRequest& request) {
-        if (request.topic.empty() || request.payload.empty()) {
+        if (!IsValidPublishTopic(request.topic)) {
             return;
         }
         if (connection_state != MqttConnectionState::Connected) {

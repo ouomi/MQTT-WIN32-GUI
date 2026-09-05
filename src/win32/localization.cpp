@@ -59,8 +59,9 @@ std::wstring_view Text(AppLanguage language, UiText text) {
         case UiText::PublishUnavailable: return L"[系统] 未发布：当前未连接到 Broker。";
         case UiText::PublishQueued: return L"[系统] 已加入本地发送队列：";
         case UiText::PublishRejected: return L"[系统] 未发布：";
-        case UiText::SelectPublishTopic: return L"请勾选一个订阅主题后再发布。";
-        case UiText::EnterMessageBeforePublishing: return L"请先输入消息内容。";
+        case UiText::SelectPublishTopic: return L"请输入发布主题，也可以从候选列表选择。";
+        case UiText::InvalidPublishTopic: return L"请输入有效的发布主题：不能包含 +、# 或空字符，UTF-8 编码不能超过 65535 字节。";
+        case UiText::InvalidSubscriptionFilter: return L"请输入有效的订阅过滤器：+ 必须独占一层，# 必须独占最后一层；不能包含空字符，UTF-8 编码不能超过 65535 字节。";
         }
     }
 
@@ -111,8 +112,9 @@ std::wstring_view Text(AppLanguage language, UiText text) {
     case UiText::PublishUnavailable: return L"[system] Not published: not connected to the broker.";
     case UiText::PublishQueued: return L"[system] Added to the local send queue: ";
     case UiText::PublishRejected: return L"[system] Not published: ";
-    case UiText::SelectPublishTopic: return L"Tick a subscription to select its topic for publishing.";
-    case UiText::EnterMessageBeforePublishing: return L"Enter a message before publishing.";
+    case UiText::SelectPublishTopic: return L"Enter a publish topic or choose a suggestion.";
+    case UiText::InvalidPublishTopic: return L"Enter a valid publish topic: no +, # or null characters; UTF-8 length must not exceed 65535 bytes.";
+    case UiText::InvalidSubscriptionFilter: return L"Enter a valid filter: + must occupy a whole level, # must occupy the final level; no null characters; UTF-8 length must not exceed 65535 bytes.";
     }
 
     return L"";
