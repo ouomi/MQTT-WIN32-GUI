@@ -315,7 +315,15 @@ void SubscriptionPanel::UpdateStatus(const std::wstring& topic, const std::wstri
         ListView_DeleteItem(list_, static_cast<int>(index));
         catalog_.Remove(index);
     } else {
-        ListView_SetItemText(list_, static_cast<int>(index), 1, const_cast<LPWSTR>(status.c_str()));
+        // Polling runs every 50 ms; unchanged text must not invalidate the row.
+        // Read the actual cell so insertion, deletion and the Removing label
+        // cannot leave a separate cache out of sync with the control.
+        std::vector<wchar_t> current(status.size() + 2, L'\0');
+        ListView_GetItemText(list_, static_cast<int>(index), 1, current.data(),
+                            static_cast<int>(current.size()));
+        if (status != current.data()) {
+            ListView_SetItemText(list_, static_cast<int>(index), 1, const_cast<LPWSTR>(status.c_str()));
+        }
     }
     restoring_ = false;
 }

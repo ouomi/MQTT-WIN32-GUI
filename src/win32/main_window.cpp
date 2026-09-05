@@ -260,8 +260,9 @@ struct MainWindow::Impl {
             kControlGap;
         SendMessageW(status, SB_SETPARTS, 1, reinterpret_cast<LPARAM>(&status_text_right));
         will.Layout(InsetPanel(panels.will), status_bounds);
-        RedrawWindow(window, nullptr, nullptr,
-                     RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+        // Child invalidation is handled by their geometry changes. Allow paint
+        // requests to coalesce instead of erasing all controls on every move.
+        RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_NOCHILDREN);
     }
 
     PanelBounds CurrentPanelBounds() const {
@@ -290,8 +291,11 @@ struct MainWindow::Impl {
         RECT client_rect{};
         GetClientRect(window, &client_rect);
         const int content_width = client_rect.right - 2 * kControlMargin;
-        subscription_panel_width = SubscriptionPanelWidth(
+        const int next_width = SubscriptionPanelWidth(
             x - kControlMargin - splitter_drag_offset, content_width);
+        const int current_width = SubscriptionPanelWidth(subscription_panel_width, content_width);
+        if (next_width == current_width) return;
+        subscription_panel_width = next_width;
         Layout(client_rect.right, client_rect.bottom);
     }
 
@@ -598,9 +602,13 @@ LRESULT CALLBACK MainWindow::WindowProc(HWND window, UINT message, WPARAM wparam
     case WM_CAPTURECHANGED:
         app.CancelSplitterDrag();
         return 0;
+    case WM_ERASEBKGND:
+        // Paint the background with the panels, avoiding a separate blank frame.
+        return 1;
     case WM_PAINT: {
         PAINTSTRUCT paint{};
         HDC device_context = BeginPaint(window, &paint);
+        FillRect(device_context, &paint.rcPaint, GetSysColorBrush(COLOR_BTNFACE));
         app.PaintClassicPanels(device_context);
         EndPaint(window, &paint);
         return 0;

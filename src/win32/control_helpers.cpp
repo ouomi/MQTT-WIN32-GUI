@@ -60,8 +60,17 @@ void UseClassicWindowFrame(HWND window) {
 }
 
 void PositionControl(HWND control, int x, int y, int width, int height) {
+    if (control == nullptr) return;
+    RECT current{};
+    if (GetWindowRect(control, &current)) {
+        MapWindowPoints(HWND_DESKTOP, GetParent(control), reinterpret_cast<LPPOINT>(&current), 2);
+        if (current.left == x && current.top == y &&
+            current.right - current.left == width && current.bottom - current.top == height) return;
+    }
+    // Let Windows invalidate moved/resized controls and exposed areas only.
+    // Layout no longer forces every child to erase and repaint synchronously.
     SetWindowPos(control, nullptr, x, y, width, height,
-                 SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW);
+                 SWP_NOACTIVATE | SWP_NOZORDER);
 }
 
 int ShowClassicMessageBox(HWND owner, const wchar_t* text, const wchar_t* caption, UINT type) {
