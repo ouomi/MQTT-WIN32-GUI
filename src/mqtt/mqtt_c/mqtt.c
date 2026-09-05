@@ -160,6 +160,8 @@ enum MQTTErrors mqtt_init(struct mqtt_client *client,
 
     client->subscribe_response_callback = NULL;
     client->subscribe_response_callback_state = NULL;
+    client->unsubscribe_response_callback = NULL;
+    client->unsubscribe_response_callback_state = NULL;
     client->inspector_callback = NULL;
     client->reconnect_callback = NULL;
     client->reconnect_state = NULL;
@@ -195,6 +197,8 @@ void mqtt_init_reconnect(struct mqtt_client *client,
 
     client->subscribe_response_callback = NULL;
     client->subscribe_response_callback_state = NULL;
+    client->unsubscribe_response_callback = NULL;
+    client->unsubscribe_response_callback_state = NULL;
     client->inspector_callback = NULL;
     client->reconnect_callback = reconnect;
     client->reconnect_state = reconnect_state;
@@ -906,9 +910,15 @@ ssize_t win32mqtt_recv(struct mqtt_client *client)
                     mqtt_recv_ret = MQTT_ERROR_ACK_OF_UNKNOWN;
                     break;
                 }
+                /* A completed request may remain until queue compaction or
+                 * completion of a partial retry. Notify the application once. */
+                if (msg->state == MQTT_QUEUED_COMPLETE) break;
                 msg->state = MQTT_QUEUED_COMPLETE;
                 /* update response time */
                 client->typical_response_time = 0.875f * (client->typical_response_time) + 0.125f * (float) (MQTT_PAL_TIME() - msg->time_sent);
+                if (client->unsubscribe_response_callback != NULL) {
+                    client->unsubscribe_response_callback(client->unsubscribe_response_callback_state, msg);
+                }
                 break;
             case MQTT_CONTROL_PINGRESP:
                 /* release associated PINGREQ */
@@ -1609,6 +1619,7 @@ ssize_t mqtt_unpack_unsuback_response(struct mqtt_response *mqtt_response, const
 
     /* parse packet_id */
     mqtt_response->decoded.unsuback.packet_id = win32mqtt_unpack_uint16(buf);
+    if (mqtt_response->decoded.unsuback.packet_id == 0) return MQTT_ERROR_MALFORMED_RESPONSE;
     buf += 2;
 
     return buf - start;

@@ -332,6 +332,122 @@ static void test_suback_validation(void)
     }
 }
 
+static unsigned unsubscription_results;
+static uint16_t unsubscribe_ids[2];
+static char unsubscribe_topics[2][32];
+static void unsubscribed(void *state, const struct mqtt_queued_message *request)
+{
+    struct fixture *f = state;
+    struct mqtt_response header;
+    ssize_t header_size = mqtt_unpack_fixed_header(&header, request->start, request->size);
+    const uint8_t *body;
+    size_t length;
+    check(f->client.mutex == 1, "UNSUBACK callback holds mutex");
+    check(request->control_type == MQTT_CONTROL_UNSUBSCRIBE &&
+          request->state == MQTT_QUEUED_COMPLETE, "callback identifies completed UNSUBSCRIBE");
+    check(header_size > 0 && unsubscription_results < 2, "valid callback request");
+    body = request->start + header_size;
+    length = ((size_t)body[2] << 8) | body[3];
+    check(length < sizeof(unsubscribe_topics[0]), "topic fits test capture");
+    memcpy(unsubscribe_topics[unsubscription_results], body + 4, length);
+    unsubscribe_topics[unsubscription_results][length] = 0;
+    unsubscribe_ids[unsubscription_results++] = request->packet_id;
+}
+
+static void test_unsubscription_results(void)
+{
+    struct fixture f;
+    uint16_t first, second;
+    uint8_t packets[] = {0xb0, 2, 0, 0, 0xb0, 2, 0, 0, 0x30, 3, 0, 1, 'a'};
+    setup(&f);
+    check(f.client.unsubscribe_response_callback == NULL &&
+          f.client.unsubscribe_response_callback_state == NULL, "reconnect init clears UNSUBACK callback");
+    f.client.unsubscribe_response_callback = unsubscribed;
+    f.client.unsubscribe_response_callback_state = &f;
+    unsubscription_results = 0;
+    check(mqtt_unsubscribe(&f.client, "first/#") == MQTT_OK, "first unsubscription queued");
+    first = mqtt_mq_get(&f.client.mq, 0)->packet_id;
+    check(mqtt_unsubscribe(&f.client, "second/+") == MQTT_OK, "second unsubscription queued");
+    second = mqtt_mq_get(&f.client.mq, 1)->packet_id;
+    send_bytes(&f, sizeof(output));
+    packets[2] = (uint8_t)(second >> 8); packets[3] = (uint8_t)second;
+    packets[6] = (uint8_t)(first >> 8); packets[7] = (uint8_t)first;
+    input = packets; input_size = 3;
+    check(win32mqtt_recv(&f.client) == MQTT_OK && unsubscription_results == 0,
+          "fragmented UNSUBACK waits for packet ID");
+    input = packets + 3; input_size = sizeof(packets) - 3;
+    check(mqtt_sync(&f.client) == MQTT_OK && f.client.error == MQTT_OK,
+          "UNSUBACK leaves connection healthy");
+    check(unsubscription_results == 2 && unsubscribe_ids[0] == second && unsubscribe_ids[1] == first &&
+          strcmp(unsubscribe_topics[0], "second/+") == 0 && strcmp(unsubscribe_topics[1], "first/#") == 0,
+          "out-of-order UNSUBACK identifies original filter and packet ID");
+    check(received == 1, "in-flight PUBLISH after UNSUBACK is delivered");
+    input = packets; input_size = 4;
+    check(win32mqtt_recv(&f.client) == MQTT_OK && unsubscription_results == 2,
+          "duplicate UNSUBACK before compaction does not notify twice");
+    mqtt_test_time = 31;
+    output_size = 0;
+    send_bytes(&f, sizeof(output));
+    check(output_size == 0, "acknowledged unsubscriptions are not retransmitted");
+    mqtt_reinit(&f.client, 2, f.send.bytes, sizeof(f.send.bytes), f.recv, sizeof(f.recv));
+    check(f.client.unsubscribe_response_callback == unsubscribed &&
+          f.client.unsubscribe_response_callback_state == &f, "reinit retains UNSUBACK callback");
+    /* Traditional init must clear a previously installed callback as well. */
+    check(mqtt_init(&f.client, 1, f.send.bytes, sizeof(f.send.bytes), f.recv, sizeof(f.recv), published) == MQTT_OK,
+          "traditional init succeeds");
+    check(f.client.unsubscribe_response_callback == NULL &&
+          f.client.unsubscribe_response_callback_state == NULL, "traditional init clears UNSUBACK callback");
+    /* mqtt_init leaves the mutex held for the initial mqtt_connect call. */
+    MQTT_PAL_MUTEX_UNLOCK(&f.client.mutex);
+    f.client.error = MQTT_OK;
+    f.client.keep_alive = 600;
+    check(mqtt_unsubscribe(&f.client, "again") == MQTT_OK, "unsubscribe after reinit");
+    first = mqtt_mq_get(&f.client.mq, 0)->packet_id;
+    send_bytes(&f, sizeof(output));
+    packets[2] = (uint8_t)(first >> 8); packets[3] = (uint8_t)first;
+    input = packets; input_size = 4;
+    check(mqtt_sync(&f.client) == MQTT_OK && unsubscription_results == 2,
+          "UNSUBACK without callback completes normally");
+    mqtt_mq_clean(&f.client.mq);
+    input = packets; input_size = 4;
+    check(win32mqtt_recv(&f.client) == MQTT_ERROR_ACK_OF_UNKNOWN,
+          "UNSUBACK for removed request is an unknown acknowledgement");
+}
+
+static void test_unsuback_validation(void)
+{
+    struct mqtt_response response;
+    const uint8_t zero_id[] = {0xb0, 2, 0, 0};
+    const uint8_t short_id[] = {0xb0, 1, 1};
+    const uint8_t extra_byte[] = {0xb0, 3, 0, 1, 0};
+    const uint8_t bad_flags[] = {0xb1, 2, 0, 1};
+    const uint8_t valid[] = {0xb0, 2, 0xff, 0xff};
+    struct fixture f;
+    check(mqtt_unpack_response(&response, zero_id, sizeof(zero_id)) == MQTT_ERROR_MALFORMED_RESPONSE,
+          "zero UNSUBACK packet ID rejected");
+    check(mqtt_unpack_response(&response, short_id, sizeof(short_id)) == MQTT_ERROR_MALFORMED_RESPONSE,
+          "short UNSUBACK packet ID rejected");
+    check(mqtt_unpack_response(&response, extra_byte, sizeof(extra_byte)) == MQTT_ERROR_MALFORMED_RESPONSE,
+          "extra UNSUBACK bytes rejected");
+    check(mqtt_unpack_response(&response, bad_flags, sizeof(bad_flags)) < 0,
+          "reserved UNSUBACK flags rejected");
+    check(mqtt_unpack_response(&response, valid, sizeof(valid)) == 4 &&
+          response.decoded.unsuback.packet_id == 65535, "maximum UNSUBACK packet ID accepted");
+    setup(&f);
+    f.client.unsubscribe_response_callback = unsubscribed;
+    f.client.unsubscribe_response_callback_state = &f;
+    unsubscription_results = 0;
+    input = valid; input_size = sizeof(valid);
+    check(win32mqtt_recv(&f.client) == MQTT_ERROR_ACK_OF_UNKNOWN && unsubscription_results == 0,
+          "unknown UNSUBACK never notifies success");
+    setup(&f);
+    f.client.unsubscribe_response_callback = unsubscribed;
+    f.client.unsubscribe_response_callback_state = &f;
+    input = zero_id; input_size = sizeof(zero_id);
+    check(win32mqtt_recv(&f.client) == MQTT_ERROR_MALFORMED_RESPONSE && unsubscription_results == 0,
+          "malformed UNSUBACK never notifies success");
+}
+
 int main(void)
 {
     test_resume(0);
@@ -343,6 +459,8 @@ int main(void)
     test_empty_publish();
     test_subscription_results();
     test_suback_validation();
+    test_unsubscription_results();
+    test_unsuback_validation();
     puts("MQTT backpressure tests passed");
     return EXIT_SUCCESS;
 }
