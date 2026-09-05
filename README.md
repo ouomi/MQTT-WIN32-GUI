@@ -100,7 +100,7 @@ dist/<release-preset>/         可直接打包分发的完整目录
 - 使用 MQTT 3.1.1，当前连接界面不提供用户名/密码配置。
 - 发送报文最多 **4096 编码字节**，接收报文最多 **8192 编码字节**，均包含协议开销。
 - 发布主题不能带 `+` 或 `#`；订阅过滤器可以使用合法的通配符。
-- 发布区输入 UTF-8 文本；消息区统一使用 `[收]`、`[发]`、`[系统]` 前缀。默认简洁模式保留主题、正文和操作结果，点击“简洁模式 / 详细模式”切换，详细模式额外显示时间和可用的 MQTT 元数据；只影响新增记录，历史文本保持原样。简洁模式的发送记录直接显示 `[发] [主题] 正文`，详细和 HEX 模式保留“已入队”；发送记录不代表 Broker 已确认。
+- 发布区输入 UTF-8 文本；消息区统一使用 `[收]`、`[发]`、`[系统]` 前缀。默认简洁模式保留主题、正文和操作结果，点击“简洁模式 / 详细模式”切换，详细模式额外显示时间和可用的 MQTT 元数据；只影响新增记录，历史文本保持原样。简洁模式的发送记录直接显示 `[发]  [主题] 正文`，详细和 HEX 模式保留“已入队”；发送记录不代表 Broker 已确认。
 - Text/HEX 按钮切换文本与十六进制视图。HEX 始终显示详细信息，禁用简洁/详细按钮，并保留发送和系统日志；退出 HEX 恢复此前选择。在 HEX 模式期间新增的文本记录也使用详细格式。文本最多保留 1000 条 / 256 Ki 字符，每条最多 8192 字符；HEX 最多保留 512 条 / 4 Mi 字符，超限淘汰最旧记录。
 - 订阅目录最多 256 条，过滤器最多 4088 个 UTF-8 字节。勾选表示期望状态，状态列显示同步、确认及拒绝；断线后逐项恢复，删除等待退订结束。
 - 配置先完整写入临时文件再替换；保存失败会在日志和状态栏提示并保留原配置，保留内存改动，每 5 秒重试；关闭时仍失败会弹窗提示。配置使用可读 UTF-8 文本，不再兼容旧编码。启动前严格检查，配置异常会提示原因并停止启动，保留原文件。格式和手工编辑规则见[配置说明](docs/CONFIGURATION.md)。
@@ -207,7 +207,7 @@ The install step creates `dist/`, containing the EXE, licenses, and the CA and D
 - MQTT 3.1.1; the connection UI currently has no username/password settings.
 - Outgoing packets are limited to **4096 encoded bytes**, incoming packets to **8192 encoded bytes**, including protocol overhead.
 - Publish topics cannot contain `+` or `#`; subscription filters support valid wildcards.
-- Publishing accepts UTF-8 text. Logs consistently use `[RX]`, `[TX]` and `[System]`. Compact mode is the default and keeps topics, payloads and operation outcomes. The Compact/Detailed button affects only new records; detailed records add local time and available MQTT metadata. Compact publish records show `[TX] [topic] payload`; Detailed and HEX retain the Queued label. Publish records are not broker acknowledgements.
+- Publishing accepts UTF-8 text. Logs consistently use `[RX]`, `[TX]` and `[System]`. Compact mode is the default and keeps topics, payloads and operation outcomes. The Compact/Detailed button affects only new records; detailed records add local time and available MQTT metadata. Compact publish records show `[TX]  [topic] payload`; Detailed and HEX retain the Queued label. Publish records are not broker acknowledgements.
 - Text/HEX switches representations. HEX always includes details, disables the Compact/Detailed button, and includes publish and system logs. Leaving HEX restores the previous preference; text records arriving during HEX remain detailed. Text retention is bounded to 1000 records / 256 Ki characters, with 8192 characters per record. HEX retention is bounded to 512 records / 4 Mi characters. Oldest records are evicted when limits are reached.
 - The subscription catalog holds up to 256 records with filters up to 4088 UTF-8 bytes. Checkboxes express desired state; the status column shows synchronization, acknowledgements and rejection. Reconnection restores subscriptions incrementally; deletion waits for unsubscription.
 - Settings are written completely to a temporary file before replacement. Failures are visible and preserve the previous file. Settings use readable UTF-8 text; previous encodings are unsupported. Invalid configuration stops startup with an error and leaves the file unchanged. See the [configuration guide](docs/CONFIGURATION.md) for the format and editing rules.

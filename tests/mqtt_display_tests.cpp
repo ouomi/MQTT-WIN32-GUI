@@ -114,7 +114,7 @@ int main() {
     Check(history.Text() == compact, "details toggle leaves existing records unchanged");
     history.Append(L"发", L"Queued [topic] second", L"QoS=2");
     const auto mixed = history.Text();
-    Check(mixed == compact + L"[发] [QoS=2] Queued [topic] second\r\n",
+    Check(mixed == compact + L"[发]  [QoS=2] Queued [topic] second\r\n",
           "only new records receive detailed metadata");
     history.ToggleDetails();
     history.ToggleHex();

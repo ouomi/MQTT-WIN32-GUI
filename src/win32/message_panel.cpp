@@ -133,9 +133,13 @@ void MessagePanel::Refresh() const {
     SendMessageW(output_, EM_SETLIMITTEXT, 4 * MqttMessageStore::MaxBytes, 0);
     SendMessageW(output_, WM_SETREDRAW, FALSE, 0);
     SetWindowTextW(output_, text.c_str());
-    SendMessageW(output_, EM_SETSEL, static_cast<WPARAM>(-1), static_cast<LPARAM>(-1));
-    SendMessageW(output_, EM_SCROLLCARET, 0, 0);
+    // A start position of -1 only clears the selection; use the actual end
+    // so replacing the text cannot leave the caret at the first line.
+    const int end = GetWindowTextLengthW(output_);
+    SendMessageW(output_, EM_SETSEL, static_cast<WPARAM>(end), static_cast<LPARAM>(end));
     SendMessageW(output_, WM_SETREDRAW, TRUE, 0);
+    SendMessageW(output_, EM_SCROLLCARET, 0, 0);
+    SendMessageW(output_, WM_VSCROLL, SB_BOTTOM, 0);
     // Restore both client and nonclient painting after the batched update,
     // including the background and scrollbars.
     RedrawWindow(output_, nullptr, nullptr,

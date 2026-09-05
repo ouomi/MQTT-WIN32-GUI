@@ -13,7 +13,7 @@ public:
     void ToggleDetails() { if (!hex_) detailed_ = !detailed_; }
     void Append(const std::wstring& tag, const std::wstring& body,
                 const std::wstring& details, const std::wstring& hex_body = {}) {
-        const auto prefix = L"[" + tag + L"] ";
+        const auto prefix = L"[" + tag + (tag == L"发" || tag == L"TX" ? L"]  " : L"] ");
         const auto metadata = details.empty() ? L"" : L"[" + details + L"] ";
         text_.Append(prefix + (Detailed() ? metadata : L"") + body);
         hex_text_.Append(prefix + metadata + (hex_body.empty() ? body : hex_body));
