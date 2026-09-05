@@ -11,6 +11,17 @@ namespace {
 
 thread_local ControlLayoutBatch* active_layout = nullptr;
 
+void InvalidateStaticText(HWND control) {
+    wchar_t class_name[16]{};
+    if (GetClassNameW(control, class_name, static_cast<int>(std::size(class_name))) > 0 &&
+        _wcsicmp(class_name, L"STATIC") == 0) {
+        // Resizing can reflow text across the entire label. Repaint its final
+        // bounds instead of retaining pixels copied from an earlier layout.
+        // Keep this asynchronous so rapid splitter moves can coalesce.
+        InvalidateRect(control, nullptr, TRUE);
+    }
+}
+
 constexpr DWORD kDwmwaWindowCornerPreference = 33;
 constexpr int kDwmcpDoNotRound = 1;
 
@@ -74,11 +85,16 @@ ControlLayoutBatch::~ControlLayoutBatch() {
         batch = DeferWindowPos(batch, p.control, nullptr, p.x, p.y, p.width, p.height,
                                SWP_NOACTIVATE | SWP_NOZORDER);
     }
-    if (batch && EndDeferWindowPos(batch)) return;
-    // A failed deferred batch must not leave the UI with an incomplete layout.
+    if (!batch || !EndDeferWindowPos(batch)) {
+        // A failed deferred batch must not leave the UI with an incomplete layout.
+        for (const auto& p : positions_) {
+            SetWindowPos(p.control, nullptr, p.x, p.y, p.width, p.height,
+                         SWP_NOACTIVATE | SWP_NOZORDER);
+        }
+    }
+    // Invalidate after committing the batch, using each label's final bounds.
     for (const auto& p : positions_) {
-        SetWindowPos(p.control, nullptr, p.x, p.y, p.width, p.height,
-                     SWP_NOACTIVATE | SWP_NOZORDER);
+        InvalidateStaticText(p.control);
     }
 }
 
@@ -98,6 +114,7 @@ void PositionControl(HWND control, int x, int y, int width, int height) {
     // Layout no longer forces every child to erase and repaint synchronously.
     SetWindowPos(control, nullptr, x, y, width, height,
                  SWP_NOACTIVATE | SWP_NOZORDER);
+    InvalidateStaticText(control);
 }
 
 int ShowClassicMessageBox(HWND owner, const wchar_t* text, const wchar_t* caption, UINT type) {
