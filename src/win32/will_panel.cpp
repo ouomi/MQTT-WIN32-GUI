@@ -80,7 +80,7 @@ void WillPanel::UpdateText(AppLanguage language, MqttConnectionState state) cons
     state_ = state;
     std::wstring title(Text(language, UiText::LastWill));
     if (IsEnabled()) title += L" (" + std::wstring(Text(language, UiText::LastWillEnabled)) + L")";
-    SetWindowTextW(toggle_, (title + L"…").c_str());
+    SetWindowTextW(toggle_, title.c_str());
     if (!window_) return;
     SetWindowTextW(window_, Text(language, UiText::LastWill).data());
     SetWindowTextW(enabled_, Text(language, UiText::EnableLastWill).data());
