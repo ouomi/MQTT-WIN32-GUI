@@ -28,6 +28,7 @@ UBSAN_OPTIONS=halt_on_error=1 ctest --test-dir build-tests-asan --output-on-fail
 - `win32mqtt_connect_attempt_tests`：验证 DNS/TCP/TLS/CONNACK 的期限边界、阶段切换、310 秒后仍判定超时、提前取消、取消优先于超时和不同连接请求的取消隔离。
 - `win32mqtt_dns_tests`：直接测试生产异步 DNS 包装器，以 `mqtt_dns_test_api.hpp` 注入 Windows API 结果，验证立即成功/失败、异步回调、取消后延迟回调、启动返回前回调、销毁与回调竞争、不支持取消 API 和 Winsock 启动失败。检查解析参数在取消后仍有效，地址和 Winsock 引用恰好释放一次。
 - `win32mqtt_capacity_tests`：验证命令数量与字节上限、拒绝后 FIFO 不变、断开预留位置、出队归还容量和整数溢出边界；将报文大小判断与实际 MQTT 编码比较；填满真实 MQTT-C 发送队列后验证发布/订阅/退订被拒绝但连接可继续发送，释放容量后可重试，真实网络错误不会被清除。
+- `win32mqtt_display_tests`：直接测试事件队列、窗口桥接和日志模型，覆盖条数/字节上限、状态优先与合并、溢出计数、分批取出、关闭后迟到回调、1 万条事件的并发生产/消费，以及日志淘汰、清空、截断、UTF-16 边界和空字符显示。不执行 Windows 定时器和 EDIT 控件绘制。
 - `win32mqtt_socket_tests`：直接编译生产 `mqtt_pal.c` 的 Winsock 分支，以函数桩提供短读写、WOULDBLOCK、EOF 和错误；检查单次调用及时返回、零长度不访问传输层以及长度转换上限。
 - `win32mqtt_bio_tests`（需要 OpenSSL）：直接编译生产 BIO 分支，用 OpenSSL 自定义 BIO 检查 WANT_READ/WANT_WRITE（包括返回零的重试）、短读写、EOF 和错误。另用真实 BIO pair 的有限缓冲区验证写满、读出后续写及关闭行为。
 
@@ -35,4 +36,4 @@ UBSAN_OPTIONS=halt_on_error=1 ctest --test-dir build-tests-asan --output-on-fail
 
 运行 `build-tests-asan/tests/win32mqtt_init_tests --reproduce-unlocked-connect` 可复现修复前的调用顺序。预期退出码为 1，并报告 `FAIL: unlock without ownership`；此负向检查不属于正常 CTest 测试。
 
-Windows 构建默认生成九个测试目标，TLS 构建增加 BIO 测试。交叉编译时，仅在配置了 `CMAKE_CROSSCOMPILING_EMULATOR` 的情况下注册 CTest 测试，避免在宿主机直接执行 Windows 程序。
+Windows 构建默认生成十个测试目标，TLS 构建增加 BIO 测试。交叉编译时，仅在配置了 `CMAKE_CROSSCOMPILING_EMULATOR` 的情况下注册 CTest 测试，避免在宿主机直接执行 Windows 程序。

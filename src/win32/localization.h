@@ -62,6 +62,7 @@ enum class UiText {
     MqttRequestTooLarge,
     MqttCommandQueueFull,
     MqttSessionStopped,
+    MqttEventsDropped,
 };
 
 AppLanguage DefaultAppLanguage();

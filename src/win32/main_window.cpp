@@ -355,8 +355,17 @@ struct MainWindow::Impl {
                                      ToMqttPublishQos(request.qos)));
     }
 
-    void HandleMqttEvent(LPARAM event_parameter) {
-        std::unique_ptr<MqttEvent> event = TakeMqttWindowEvent(event_parameter);
+    void PollMqttEvents() {
+        auto batch = mqtt_events.Take();
+        messages.BeginBatch();
+        if (batch.dropped) messages.Append(std::wstring(Text(language, UiText::MqttEventsDropped)) +
+                                          std::to_wstring(batch.dropped));
+        for (const auto& event : batch.events) HandleMqttEvent(event);
+        messages.EndBatch();
+    }
+
+    void HandleMqttEvent(const MqttEvent& value) {
+        const MqttEvent* event = &value;
         if (event->type == MqttEventType::StateChanged) {
             connection_state = event->connection_state;
             UpdateConnectionUi();
@@ -411,7 +420,9 @@ struct MainWindow::Impl {
     int subscription_panel_width{};
     bool splitter_dragging{};
     int splitter_drag_offset{};
+    MqttWindowBridge mqtt_events;
     std::unique_ptr<MqttSession> mqtt;
+    static constexpr UINT_PTR MqttEventTimer = 1;
 };
 
 MainWindow::MainWindow(AppSettings settings)
@@ -465,7 +476,8 @@ LRESULT CALLBACK MainWindow::WindowProc(HWND window, UINT message, WPARAM wparam
     case WM_CREATE:
         UseClassicWindowFrame(window);
         app.CreateControls();
-        app.mqtt = std::make_unique<MqttSession>(MakeMqttWindowEventHandler(window));
+        if (!SetTimer(window, Impl::MqttEventTimer, 50, nullptr)) return -1;
+        app.mqtt = std::make_unique<MqttSession>(app.mqtt_events.Handler());
         return 0;
     case WM_GETMINMAXINFO: {
         auto* min_max = reinterpret_cast<MINMAXINFO*>(lparam);
@@ -533,9 +545,12 @@ LRESULT CALLBACK MainWindow::WindowProc(HWND window, UINT message, WPARAM wparam
         SetBkColor(device_context, GetSysColor(COLOR_WINDOW));
         return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
     }
-    case WM_MQTT_EVENT:
-        app.HandleMqttEvent(lparam);
-        return 0;
+    case WM_TIMER:
+        if (wparam == Impl::MqttEventTimer) {
+            app.PollMqttEvents();
+            return 0;
+        }
+        break;
     case WM_CONTEXTMENU:
         if (app.subscriptions.HandleContextMenu(window, app.language,
                                                 reinterpret_cast<HWND>(wparam), lparam)) {
@@ -599,11 +614,12 @@ LRESULT CALLBACK MainWindow::WindowProc(HWND window, UINT message, WPARAM wparam
         SaveAppSettings({app.language, app.connection.ServerUri(), app.connection.ClientId(),
                          app.subscriptions.Snapshot(), app.settings.window_width,
                          app.settings.window_height});
+        KillTimer(window, Impl::MqttEventTimer);
+        app.mqtt_events.Close();
         if (app.mqtt) {
             app.mqtt->Stop();
             app.mqtt.reset();
         }
-        DrainMqttWindowEvents(window);
         PostQuitMessage(0);
         return 0;
     case WM_NCDESTROY:

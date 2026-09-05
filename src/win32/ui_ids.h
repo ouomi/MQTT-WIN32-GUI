@@ -19,5 +19,3 @@
 #define IDC_WILL_TOGGLE     50019
 
 #define IDM_SUB_REMOVE      40104
-
-#define WM_MQTT_EVENT       (WM_APP + 1)

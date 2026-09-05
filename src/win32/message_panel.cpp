@@ -19,6 +19,7 @@ void MessagePanel::Create(HWND parent, AppLanguage language) {
     title_ = AddText(parent, 60005, L"");
     output_ = AddEdit(parent, IDC_MESSAGES, L"",
                       ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_HSCROLL | WS_VSCROLL);
+    SendMessageW(output_, EM_SETLIMITTEXT, MessageLog::MaxCharacters, 0);
     clear_button_ = AddButton(parent, IDC_CLEAR_MESSAGES, L"");
     UpdateText(language);
 }
@@ -46,14 +47,32 @@ bool MessagePanel::HandleCommand(WORD id, WORD notification) const {
     if (id != IDC_CLEAR_MESSAGES || notification != BN_CLICKED) {
         return false;
     }
-    SetWindowTextW(output_, L"");
+    log_.Clear();
+    dirty_ = true;
+    Refresh();
     return true;
 }
 
 void MessagePanel::Append(const std::wstring& message) const {
-    const std::wstring line = message + L"\r\n";
+    log_.Append(message);
+    dirty_ = true;
+    if (!batching_) Refresh();
+}
+
+void MessagePanel::EndBatch() const {
+    batching_ = false;
+    if (dirty_) Refresh();
+}
+
+void MessagePanel::Refresh() const {
+    const auto text = log_.Text();
+    SendMessageW(output_, WM_SETREDRAW, FALSE, 0);
+    SetWindowTextW(output_, text.c_str());
     SendMessageW(output_, EM_SETSEL, static_cast<WPARAM>(-1), static_cast<LPARAM>(-1));
-    SendMessageW(output_, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(line.c_str()));
+    SendMessageW(output_, EM_SCROLLCARET, 0, 0);
+    SendMessageW(output_, WM_SETREDRAW, TRUE, 0);
+    InvalidateRect(output_, nullptr, TRUE);
+    dirty_ = false;
 }
 
 } // namespace win32mqtt
