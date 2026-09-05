@@ -18,6 +18,7 @@ static void check(int condition, const char *message)
         exit(EXIT_FAILURE);
     }
 }
+/* This target uses mqtt_test_pal.h: the mutex is an integer ownership tracker. */
 void mqtt_test_mutex_init(mqtt_pal_mutex_t *mutex) { *mutex = 0; }
 void mqtt_test_mutex_lock(mqtt_pal_mutex_t *mutex) { check(*mutex == 0, "lock ownership"); *mutex = 1; }
 void mqtt_test_mutex_unlock(mqtt_pal_mutex_t *mutex) { check(*mutex == 1, "unlock ownership"); *mutex = 0; }

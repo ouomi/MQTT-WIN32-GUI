@@ -360,6 +360,7 @@ struct MainWindow::Impl {
                 break;
             case MqttConnectionState::Disconnected:
                 messages.Append(std::wstring(Text(language, UiText::DisconnectedMessage)));
+                if (!event->detail.empty()) messages.Append(L"[MQTT] " + Utf8ToWide(event->detail));
                 break;
             case MqttConnectionState::Disconnecting:
                 break;

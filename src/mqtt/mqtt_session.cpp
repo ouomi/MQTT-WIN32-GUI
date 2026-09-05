@@ -1,4 +1,5 @@
 #include "mqtt_session.h"
+#include "mqtt_disconnect.hpp"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -46,7 +47,7 @@ std::string ExecutableDirectoryUtf8() {
 } // namespace
 
 struct MqttSession::Impl {
-    enum class CommandType { Connect, Disconnect, Subscribe, Unsubscribe, Publish, Stop };
+    enum class CommandType { Connect, Disconnect, Subscribe, Unsubscribe, Publish };
     struct Command {
         CommandType type;
         MqttEndpoint endpoint;
@@ -63,13 +64,15 @@ struct MqttSession::Impl {
     ~Impl() { Stop(); }
 
     void Enqueue(Command command) {
-        { std::lock_guard<std::mutex> lock(mutex); commands.push_back(std::move(command)); }
+        { std::lock_guard<std::mutex> lock(mutex);
+          if (stopped.load()) return;
+          commands.push_back(std::move(command)); }
         wake.notify_one();
     }
     void Stop() {
         if (!stopped.exchange(true)) {
             cancel_connect.store(true);
-            Enqueue({CommandType::Stop, {}, {}, {}, MqttPublishQos::Qos0, std::nullopt});
+            wake.notify_one();
         }
         if (worker.joinable()) worker.join();
     }
@@ -205,7 +208,34 @@ struct MqttSession::Impl {
         if (result != MQTT_OK) { Fail(mqtt_error_str(result)); return; }
         awaiting_connack = true;
     }
+    void FinishDisconnect(std::string detail = {}) {
+        CloseSocket();
+        awaiting_connack = false;
+        state = MqttConnectionState::Disconnected;
+        Emit(MqttEventType::StateChanged, state, std::move(detail));
+    }
+    void BeginDisconnect() {
+        if (state == MqttConnectionState::Disconnecting) return;
+        if (!client_initialized || state != MqttConnectionState::Connected) {
+            FinishDisconnect();
+            return;
+        }
+        disconnect.Begin(MqttDisconnect::Clock::now());
+        awaiting_connack = false;
+        state = MqttConnectionState::Disconnecting;
+        Emit(MqttEventType::StateChanged, state);
+    }
     void Sync() {
+        if (state == MqttConnectionState::Disconnecting) {
+            switch (disconnect.Poll(client, MqttDisconnect::Clock::now())) {
+            case MqttDisconnect::Result::Pending: return;
+            case MqttDisconnect::Result::Sent: FinishDisconnect(); return;
+            case MqttDisconnect::Result::TimedOut:
+                FinishDisconnect("DISCONNECT send timed out; connection closed"); return;
+            case MqttDisconnect::Result::Failed:
+                FinishDisconnect("DISCONNECT send failed; connection closed"); return;
+            }
+        }
         if (!client_initialized ||
             (state != MqttConnectionState::Connecting && state != MqttConnectionState::Connected)) return;
         const enum MQTTErrors result = mqtt_sync(&client);
@@ -217,14 +247,18 @@ struct MqttSession::Impl {
     void Handle(Command command) {
         switch (command.type) {
         case CommandType::Connect:
-            ConnectNow(command.endpoint, command.first, command.last_will);
+            if (state == MqttConnectionState::Connected || state == MqttConnectionState::Disconnecting) {
+                next_connect = std::move(command);
+                BeginDisconnect();
+            } else {
+                ConnectNow(command.endpoint, command.first, command.last_will);
+            }
             break;
         case CommandType::Disconnect:
             cancel_connect.store(true);
-            if (state == MqttConnectionState::Disconnected) { CloseSocket(); awaiting_connack = false; break; }
-            if (state == MqttConnectionState::Connected && client_initialized) mqtt_disconnect(&client);
-            state = MqttConnectionState::Disconnecting; Emit(MqttEventType::StateChanged, state);
-            CloseSocket(); state = MqttConnectionState::Disconnected; awaiting_connack = false; Emit(MqttEventType::StateChanged, state); break;
+            next_connect.reset();
+            BeginDisconnect();
+            break;
         case CommandType::Subscribe: if (state == MqttConnectionState::Connected) mqtt_subscribe(&client, command.first.c_str(), 0); break;
         case CommandType::Unsubscribe: if (state == MqttConnectionState::Connected) mqtt_unsubscribe(&client, command.first.c_str()); break;
         case CommandType::Publish: {
@@ -245,17 +279,35 @@ struct MqttSession::Impl {
                  std::move(command.second), command.qos);
             break;
         }
-        case CommandType::Stop: stopping = true; break;
         }
     }
     void Run() {
         WSADATA data{}; if (WSAStartup(MAKEWORD(2, 2), &data) != 0) { Emit(MqttEventType::StateChanged, MqttConnectionState::Failed, "Winsock initialization failed"); return; }
         mqtt_init_reconnect(&client, nullptr, nullptr, Published); client.publish_response_callback_state = this;
-        while (!stopping) {
+        while (!stopping || state == MqttConnectionState::Disconnecting) {
             std::deque<Command> pending;
-            { std::unique_lock<std::mutex> lock(mutex); wake.wait_for(lock, std::chrono::milliseconds(25), [this] { return !commands.empty(); }); pending.swap(commands); }
-            for (Command& command : pending) Handle(std::move(command));
+            { std::unique_lock<std::mutex> lock(mutex);
+              wake.wait_for(lock, std::chrono::milliseconds(25), [this] {
+                  return !commands.empty() || (stopped.load() && !stopping);
+              });
+              pending.swap(commands); }
+            for (Command& command : pending) {
+                if (stopped.load()) break;
+                Handle(std::move(command));
+            }
+            // Stop takes priority over queued work and reuses an existing
+            // disconnect deadline instead of restarting its timeout.
+            if (stopped.load() && !stopping) {
+                stopping = true;
+                next_connect.reset();
+                BeginDisconnect();
+            }
             Sync();
+            if (!stopped.load() && state == MqttConnectionState::Disconnected && next_connect) {
+                Command command = std::move(*next_connect);
+                next_connect.reset();
+                ConnectNow(command.endpoint, command.first, command.last_will);
+            }
         }
         CloseSocket();
         DeleteCriticalSection(&client.mutex);
@@ -264,6 +316,8 @@ struct MqttSession::Impl {
 
     EventHandler handler; std::mutex mutex; std::condition_variable wake; std::deque<Command> commands; std::thread worker;
     std::atomic<bool> stopped{false}; std::atomic<bool> cancel_connect{false}; bool stopping = false; bool awaiting_connack = false; bool client_initialized = false;
+    MqttDisconnect disconnect;
+    std::optional<Command> next_connect;
     SOCKET socket_handle = INVALID_SOCKET;
 #if WIN32MQTT_ENABLE_TLS
     BIO* transport = nullptr;

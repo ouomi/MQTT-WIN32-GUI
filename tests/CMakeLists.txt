@@ -42,7 +42,13 @@ target_compile_definitions(win32mqtt_backpressure_tests PRIVATE
 add_executable(win32mqtt_socket_tests mqtt_transport_tests.c ../src/mqtt/mqtt_c/mqtt_pal.c)
 target_compile_definitions(win32mqtt_socket_tests PRIVATE MQTT_CUSTOM_PAL_HEADER="mqtt_transport_pal.h")
 
-set(transport_tests win32mqtt_backpressure_tests win32mqtt_socket_tests)
+add_executable(win32mqtt_disconnect_tests mqtt_disconnect_tests.cpp ../src/mqtt/mqtt_c/mqtt.c)
+target_compile_features(win32mqtt_disconnect_tests PRIVATE cxx_std_17)
+target_include_directories(win32mqtt_disconnect_tests PRIVATE ../src)
+target_compile_definitions(win32mqtt_disconnect_tests PRIVATE
+    MQTT_CUSTOM_PAL_HEADER="mqtt_test_pal.h" WIN32MQTT_TEST_TRACK_LOCKS=1)
+
+set(transport_tests win32mqtt_backpressure_tests win32mqtt_socket_tests win32mqtt_disconnect_tests)
 # Native protocol tests remain available without OpenSSL. TLS application builds
 # also compile the BIO tests with the same OpenSSL selected for the application.
 if(NOT WIN32 OR WIN32MQTT_ENABLE_TLS)
