@@ -37,8 +37,17 @@ static inline uint16_t mqtt_test_ntohs(uint16_t value)
 #define MQTT_PAL_HTONS(value) mqtt_test_htons(value)
 #define MQTT_PAL_NTOHS(value) mqtt_test_ntohs(value)
 #define MQTT_PAL_TIME() ((mqtt_pal_time_t)0)
+#if defined(WIN32MQTT_TEST_TRACK_LOCKS)
+void mqtt_test_mutex_init(mqtt_pal_mutex_t *mutex);
+void mqtt_test_mutex_lock(mqtt_pal_mutex_t *mutex);
+void mqtt_test_mutex_unlock(mqtt_pal_mutex_t *mutex);
+#define MQTT_PAL_MUTEX_INIT(ptr) mqtt_test_mutex_init(ptr)
+#define MQTT_PAL_MUTEX_LOCK(ptr) mqtt_test_mutex_lock(ptr)
+#define MQTT_PAL_MUTEX_UNLOCK(ptr) mqtt_test_mutex_unlock(ptr)
+#else
 #define MQTT_PAL_MUTEX_INIT(ptr) (*(ptr) = 0)
 #define MQTT_PAL_MUTEX_LOCK(ptr) ((void)(ptr), abort())
 #define MQTT_PAL_MUTEX_UNLOCK(ptr) ((void)(ptr), abort())
+#endif
 
 #endif

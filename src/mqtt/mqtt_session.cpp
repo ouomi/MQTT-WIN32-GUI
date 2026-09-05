@@ -56,7 +56,10 @@ struct MqttSession::Impl {
         std::optional<MqttLastWill> last_will;
     };
 
-    explicit Impl(EventHandler handler) : handler(std::move(handler)), worker(&Impl::Run, this) {}
+    explicit Impl(EventHandler handler) : handler(std::move(handler)) {
+        // Run may access every member, so start only after member initialization.
+        worker = std::thread(&Impl::Run, this);
+    }
     ~Impl() { Stop(); }
 
     void Enqueue(Command command) {
@@ -189,6 +192,10 @@ struct MqttSession::Impl {
         const std::uint8_t connect_flags = static_cast<std::uint8_t>(
             MQTT_CONNECT_CLEAN_SESSION |
             (last_will ? MQTT_CONNECT_WILL_QOS_0 : 0));
+        // mqtt_init_reconnect leaves the mutex unlocked. Unlike ordinary MQTT-C
+        // operations, mqtt_connect requires ownership and releases it on every return.
+        // Acquire here, after all cancellation exits; do not wrap this in a lock guard.
+        MQTT_PAL_MUTEX_LOCK(&client.mutex);
         const enum MQTTErrors result = mqtt_connect(
             &client, client_id.empty() ? nullptr : client_id.c_str(), will_topic, will_payload,
             will_payload_size, nullptr, nullptr, connect_flags, 60);
@@ -247,7 +254,9 @@ struct MqttSession::Impl {
             for (Command& command : pending) Handle(std::move(command));
             Sync();
         }
-        CloseSocket(); WSACleanup();
+        CloseSocket();
+        DeleteCriticalSection(&client.mutex);
+        WSACleanup();
     }
 
     EventHandler handler; std::mutex mutex; std::condition_variable wake; std::deque<Command> commands; std::thread worker;
