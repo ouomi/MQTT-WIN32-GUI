@@ -89,7 +89,10 @@ void MessagePanel::Refresh() const {
     SendMessageW(output_, EM_SETSEL, static_cast<WPARAM>(-1), static_cast<LPARAM>(-1));
     SendMessageW(output_, EM_SCROLLCARET, 0, 0);
     SendMessageW(output_, WM_SETREDRAW, TRUE, 0);
-    InvalidateRect(output_, nullptr, TRUE);
+    // Restore both client and nonclient painting after the batched update,
+    // including the background and scrollbars.
+    RedrawWindow(output_, nullptr, nullptr,
+                 RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
     dirty_ = false;
 }
 

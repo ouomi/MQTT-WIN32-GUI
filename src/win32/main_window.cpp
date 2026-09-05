@@ -607,6 +607,14 @@ LRESULT CALLBACK MainWindow::WindowProc(HWND window, UINT message, WPARAM wparam
     }
     case WM_CTLCOLORSTATIC: {
         HDC device_context = reinterpret_cast<HDC>(wparam);
+        // Read-only EDIT controls send WM_CTLCOLORSTATIC too. Painting their
+        // text transparently can leave old glyphs behind when the log scrolls.
+        if (GetDlgCtrlID(reinterpret_cast<HWND>(lparam)) == IDC_MESSAGES) {
+            SetTextColor(device_context, GetSysColor(COLOR_WINDOWTEXT));
+            SetBkColor(device_context, GetSysColor(COLOR_WINDOW));
+            SetBkMode(device_context, OPAQUE);
+            return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
+        }
         SetTextColor(device_context, GetSysColor(COLOR_BTNTEXT));
         SetBkMode(device_context, TRANSPARENT);
         return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_BTNFACE));
