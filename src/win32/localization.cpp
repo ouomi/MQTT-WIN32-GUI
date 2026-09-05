@@ -135,7 +135,7 @@ std::wstring_view Text(AppLanguage language, UiText text) {
     case UiText::DisconnectedMessage: return L"Disconnected.";
     case UiText::InitialMessage: return L"Add a topic, then tick its checkbox to activate the subscription.";
     case UiText::NewTopic: return L"New topic:";
-    case UiText::AddSubscription: return L"Add subscription";
+    case UiText::AddSubscription: return L"Add SUB";
     case UiText::Topic: return L"Topic";
     case UiText::EnterTopicFirst: return L"Enter a topic first.";
     case UiText::DuplicateSubscription: return L"That subscription is already in the list.";
@@ -152,7 +152,7 @@ std::wstring_view Text(AppLanguage language, UiText text) {
     case UiText::SubscriptionConfirmed: return L"Subscribed";
     case UiText::SubscriptionWaiting: return L"Waiting";
     case UiText::SubscriptionRemoving: return L"Removing";
-    case UiText::ClearMessages: return L"Clear messages";
+    case UiText::ClearMessages: return L"Clear MSG";
     case UiText::Message: return L"Message:";
     case UiText::DefaultPayload: return L"Hello from the traditional Win32 UI";
     case UiText::PublishTo: return L"Publish to:";
