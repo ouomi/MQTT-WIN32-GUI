@@ -59,7 +59,7 @@ add_executable(win32mqtt WIN32
 )
 
 set_target_properties(win32mqtt PROPERTIES
-    OUTPUT_NAME "WIN32-MQTT"
+    OUTPUT_NAME "mqttwin32"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 target_compile_features(win32mqtt PRIVATE c_std_99 cxx_std_17)

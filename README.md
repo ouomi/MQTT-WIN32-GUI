@@ -10,7 +10,7 @@ A small Windows MQTT debugging tool built with native Win32 controls. Connect to
 
 ### 使用
 
-需要 **Windows 8 或更新版本**。打开发布目录中的 `WIN32-MQTT.exe`，无需安装。
+需要 **Windows 8 或更新版本**。打开发布目录中的 `mqttwin32.exe`，无需安装。
 
 1. 输入 Broker 地址，例如 `mqtt://localhost:1883`；TLS 版也支持 `mqtts://broker.example:8883`。
 2. 设置客户端 ID；如果需要遗嘱消息，在连接前配置。
@@ -116,7 +116,7 @@ dist/<release-preset>/         可直接打包分发的完整目录
 
 ### Usage
 
-Requires **Windows 8 or later**. Open `WIN32-MQTT.exe` from the distribution directory; no installer is needed.
+Requires **Windows 8 or later**. Open `mqttwin32.exe` from the distribution directory; no installer is needed.
 
 1. Enter a broker URI, such as `mqtt://localhost:1883`. TLS builds also accept `mqtts://broker.example:8883`.
 2. Set the client ID and, if needed, configure the Last Will before connecting.

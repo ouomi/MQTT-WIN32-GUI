@@ -12,6 +12,7 @@ constexpr int kControlGap = 8;
 constexpr int kHeadingHeight = 18;
 constexpr int kHeadingOffset = 24;
 constexpr int kRowHeight = 23;
+constexpr int kHeadingButtonOffset = -3;
 
 } // namespace
 
@@ -40,9 +41,9 @@ void MessagePanel::Layout(const RECT& bounds) const {
     PositionControl(title_, content_left, content_top,
                     content_width - 2 * (kButtonWidth + kControlGap), kHeadingHeight);
     PositionControl(hex_button_, bounds.right - kPanelContentMargin - 2 * kButtonWidth - kControlGap,
-                    content_top, kButtonWidth, kRowHeight);
+                    content_top + kHeadingButtonOffset, kButtonWidth, kRowHeight);
     PositionControl(clear_button_, bounds.right - kPanelContentMargin - kButtonWidth,
-                    content_top, kButtonWidth, kRowHeight);
+                    content_top + kHeadingButtonOffset, kButtonWidth, kRowHeight);
     PositionControl(output_, content_left, output_y, content_width, output_bottom - output_y);
 }
 

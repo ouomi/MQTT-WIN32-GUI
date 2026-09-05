@@ -13,7 +13,7 @@ AppLanguage DefaultAppLanguage() {
 std::wstring_view Text(AppLanguage language, UiText text) {
     if (language == AppLanguage::Chinese) {
         switch (text) {
-        case UiText::ApplicationTitle: return L"WIN32-MQTT - Win32 MQTT 客户端";
+        case UiText::ApplicationTitle: return L"Win32 MQTT 客户端";
         case UiText::WindowClassRegistrationFailed: return L"无法注册主窗口类。";
         case UiText::WindowCreationFailed: return L"无法创建主窗口。";
         case UiText::LanguageChinese: return L"中文";
@@ -70,7 +70,7 @@ std::wstring_view Text(AppLanguage language, UiText text) {
     }
 
     switch (text) {
-    case UiText::ApplicationTitle: return L"WIN32-MQTT - Win32 MQTT Client";
+    case UiText::ApplicationTitle: return L"Win32 MQTT Client";
     case UiText::WindowClassRegistrationFailed: return L"Unable to register the main window class.";
     case UiText::WindowCreationFailed: return L"Unable to create the main window.";
     case UiText::LanguageChinese: return L"中文";

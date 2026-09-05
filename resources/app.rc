@@ -18,10 +18,10 @@ BEGIN
         BLOCK "040904B0"
         BEGIN
             VALUE "CompanyName", "WIN32-MQTT"
-            VALUE "FileDescription", "Traditional Win32 MQTT client"
+            VALUE "FileDescription", "Win32 MQTT client"
             VALUE "FileVersion", "0.1.0"
-            VALUE "InternalName", "win32mqtt"
-            VALUE "OriginalFilename", "WIN32-MQTT.exe"
+            VALUE "InternalName", "mqttwin32"
+            VALUE "OriginalFilename", "mqttwin32.exe"
             VALUE "ProductName", "WIN32-MQTT"
             VALUE "ProductVersion", "0.1.0"
         END

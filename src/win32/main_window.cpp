@@ -582,7 +582,8 @@ LRESULT CALLBACK MainWindow::WindowProc(HWND window, UINT message, WPARAM wparam
         self = static_cast<MainWindow*>(create->lpCreateParams);
         SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
         self->impl_->window = window;
-        return TRUE;
+        // Default nonclient creation initializes the caption from CREATESTRUCTW.
+        return DefWindowProcW(window, message, wparam, lparam);
     }
     if (self == nullptr) {
         return DefWindowProcW(window, message, wparam, lparam);
