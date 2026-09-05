@@ -203,6 +203,25 @@ static void test_receive(void)
     check(f.client.mutex == 0, "EOF releases lock");
 }
 
+static void test_receive_budget(void)
+{
+    struct fixture f;
+    uint8_t packets[500];
+    const uint8_t packet[] = {0x30, 3, 0, 1, 'a'};
+    unsigned i;
+    setup(&f);
+    for (i = 0; i < 100; ++i) memcpy(packets + i * sizeof(packet), packet, sizeof(packet));
+    input = packets;
+    input_size = sizeof(packets);
+    for (i = 1; i <= 3; ++i) {
+        check(win32mqtt_recv(&f.client) == MQTT_OK && received == i * 32,
+              "receive yields after bounded packet batch");
+        check(f.client.mutex == 0, "receive budget releases mutex");
+    }
+    check(win32mqtt_recv(&f.client) == MQTT_OK && received == 100,
+          "remaining buffered packets survive yielding");
+}
+
 int main(void)
 {
     test_resume(0);
@@ -210,6 +229,7 @@ int main(void)
     test_retry_and_ack();
     test_compaction_and_reinit();
     test_receive();
+    test_receive_budget();
     puts("MQTT backpressure tests passed");
     return EXIT_SUCCESS;
 }

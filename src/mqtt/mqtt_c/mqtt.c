@@ -685,10 +685,12 @@ ssize_t win32mqtt_recv(struct mqtt_client *client)
 {
     struct mqtt_response response;
     ssize_t mqtt_recv_ret = MQTT_OK;
+    unsigned int packets = 0;
     MQTT_PAL_MUTEX_LOCK(&client->mutex);
 
-    /* read until there is nothing left to read, or there was an error */
-    while(mqtt_recv_ret == MQTT_OK) {
+    /* Yield regularly even when the peer continuously supplies packets, so the
+     * session can check cancellation and deadlines between mqtt_sync calls. */
+    while(mqtt_recv_ret == MQTT_OK && packets++ < 32) {
         /* read in as many bytes as possible */
         ssize_t rv, consumed;
         struct mqtt_queued_message *msg = NULL;
@@ -928,7 +930,7 @@ ssize_t win32mqtt_recv(struct mqtt_client *client)
         }
     }
 
-    /* In case there was some error handling the (well formed) message, we end up here */
+    /* Return on a protocol error or when this call's receive budget is spent. */
     MQTT_PAL_MUTEX_UNLOCK(&client->mutex);
     return mqtt_recv_ret;
 }

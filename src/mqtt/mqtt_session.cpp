@@ -1,5 +1,7 @@
 #include "mqtt_session.h"
 #include "mqtt_disconnect.hpp"
+#include "mqtt_connect_attempt.hpp"
+#include "mqtt_dns.hpp"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -55,6 +57,7 @@ struct MqttSession::Impl {
         std::string second;
         MqttPublishQos qos;
         std::optional<MqttLastWill> last_will;
+        MqttConnectAttempt::Cancellation cancellation{};
     };
 
     explicit Impl(EventHandler handler) : handler(std::move(handler)) {
@@ -66,12 +69,20 @@ struct MqttSession::Impl {
     void Enqueue(Command command) {
         { std::lock_guard<std::mutex> lock(mutex);
           if (stopped.load()) return;
+          if (command.type == CommandType::Connect) {
+              if (latest_connect) latest_connect->cancelled.store(true);
+              command.cancellation = std::make_shared<MqttConnectCancellation>();
+              latest_connect = command.cancellation;
+          } else if (command.type == CommandType::Disconnect && latest_connect) {
+              latest_connect->cancelled.store(true);
+          }
           commands.push_back(std::move(command)); }
         wake.notify_one();
     }
     void Stop() {
         if (!stopped.exchange(true)) {
-            cancel_connect.store(true);
+            { std::lock_guard<std::mutex> lock(mutex);
+              if (latest_connect) latest_connect->cancelled.store(true); }
             wake.notify_one();
         }
         if (worker.joinable()) worker.join();
@@ -98,36 +109,69 @@ struct MqttSession::Impl {
         }
         return MQTT_PUBLISH_QOS_0;
     }
+    bool ConnectionPending(std::string& error) {
+        const auto status = connect_attempt.Check(MqttConnectAttempt::Clock::now());
+        if (stopped.load() || status == MqttConnectAttempt::Status::Cancelled) {
+            error = "connection cancelled"; return false;
+        }
+        if (status == MqttConnectAttempt::Status::TimedOut) {
+            error = connect_attempt.TimeoutMessage(); return false;
+        }
+        return true;
+    }
+    void WaitForConnectProgress() {
+        std::unique_lock<std::mutex> lock(mutex);
+        wake.wait_for(lock, std::chrono::milliseconds(20), [this] {
+            return stopped.load() || connect_attempt.Cancelled();
+        });
+    }
     bool OpenSocket(const MqttEndpoint& endpoint, std::string& error) {
-        addrinfo hints{}; hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM;
-        addrinfo* addresses = nullptr;
-        if (getaddrinfo(endpoint.host.c_str(), endpoint.port.c_str(), &hints, &addresses) != 0) { error = "DNS lookup failed"; return false; }
-        for (addrinfo* address = addresses; address != nullptr && !cancel_connect.load(); address = address->ai_next) {
+        MqttDnsQuery query;
+        if (!ConnectionPending(error) || !query.Start(endpoint.host, endpoint.port, error)) return false;
+        while (!query.Done()) {
+            if (!ConnectionPending(error)) return false;
+            WaitForConnectProgress();
+        }
+        if (!ConnectionPending(error)) return false;
+        if (query.Error() != 0) { error = "DNS lookup failed"; return false; }
+        connect_attempt.Enter(MqttConnectAttempt::Phase::Tcp, MqttConnectAttempt::Clock::now());
+        // One deadline covers all addresses, not ten seconds per address.
+        for (const auto* address = query.Addresses(); address; address = address->ai_next) {
+            if (!ConnectionPending(error)) return false;
             const SOCKET candidate = socket(address->ai_family, address->ai_socktype, address->ai_protocol);
             if (candidate == INVALID_SOCKET) continue;
-            u_long nonblocking = 1; ioctlsocket(candidate, FIONBIO, &nonblocking);
+            u_long nonblocking = 1;
+            if (ioctlsocket(candidate, FIONBIO, &nonblocking) != 0) { closesocket(candidate); continue; }
             const int result = connect(candidate, address->ai_addr, static_cast<int>(address->ai_addrlen));
-            if (result == 0) { socket_handle = candidate; freeaddrinfo(addresses); return true; }
+            if (result == 0) { socket_handle = candidate; return ConnectionPending(error); }
             const int socket_error = WSAGetLastError();
             if (socket_error == WSAEWOULDBLOCK || socket_error == WSAEINPROGRESS) {
-                for (int retry = 0; retry < 50 && !cancel_connect.load(); ++retry) {
+                while (ConnectionPending(error)) {
                     fd_set writable; FD_ZERO(&writable); FD_SET(candidate, &writable);
-                    TIMEVAL timeout{0, 200000};
-                    if (select(0, nullptr, &writable, nullptr, &timeout) > 0) {
+                    fd_set failed; FD_ZERO(&failed); FD_SET(candidate, &failed);
+                    TIMEVAL timeout{0, 20000};
+                    const int ready = select(0, nullptr, &writable, &failed, &timeout);
+                    if (ready == SOCKET_ERROR) break;
+                    if (ready > 0) {
                         int connect_error = 0; int length = sizeof(connect_error);
-                        getsockopt(candidate, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&connect_error), &length);
-                        if (connect_error == 0) { socket_handle = candidate; freeaddrinfo(addresses); return true; }
+                        if (getsockopt(candidate, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&connect_error), &length) == 0 &&
+                            connect_error == 0 && FD_ISSET(candidate, &writable)) {
+                            socket_handle = candidate; return ConnectionPending(error);
+                        }
                         break;
                     }
                 }
             }
             closesocket(candidate);
         }
-        freeaddrinfo(addresses); error = cancel_connect.load() ? "connection cancelled" : "TCP connection failed"; return false;
+        if (ConnectionPending(error)) error = "TCP connection failed";
+        return false;
     }
 #if WIN32MQTT_ENABLE_TLS
     bool ConfigureTransport(const MqttEndpoint& endpoint, std::string& error) {
+        if (!ConnectionPending(error)) return false;
         if (endpoint.secure) {
+            connect_attempt.Enter(MqttConnectAttempt::Phase::Tls, MqttConnectAttempt::Clock::now());
             ssl_context = SSL_CTX_new(TLS_client_method());
             const std::string ca_bundle = ExecutableDirectoryUtf8() + "ca-bundle.pem";
             if (ssl_context == nullptr || ca_bundle.empty() ||
@@ -146,12 +190,12 @@ struct MqttSession::Impl {
             BIO* socket_transport = BIO_new_socket(socket_handle, BIO_NOCLOSE);
             if (socket_transport == nullptr) { error = "unable to create TLS socket transport"; return false; }
             transport = BIO_push(transport, socket_transport);
-            for (int attempt = 0; attempt < 500 && !cancel_connect.load(); ++attempt) {
-                if (BIO_do_handshake(transport) == 1) return true;
+            while (ConnectionPending(error)) {
+                if (BIO_do_handshake(transport) == 1) return ConnectionPending(error);
                 if (!BIO_should_retry(transport)) { error = "TLS handshake failed"; return false; }
-                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                WaitForConnectProgress();
             }
-            error = "TLS handshake timed out"; return false;
+            return false;
         }
         transport = BIO_new_socket(socket_handle, BIO_NOCLOSE);
         if (transport == nullptr) { error = "unable to create socket transport"; return false; }
@@ -172,17 +216,20 @@ struct MqttSession::Impl {
     }
     void Fail(std::string error) { CloseSocket(); state = MqttConnectionState::Failed; awaiting_connack = false; Emit(MqttEventType::StateChanged, state, std::move(error)); }
     void ConnectNow(const MqttEndpoint& endpoint, const std::string& client_id,
-                    const std::optional<MqttLastWill>& last_will) {
-        CloseSocket(); cancel_connect.store(false); state = MqttConnectionState::Connecting;
+                    const std::optional<MqttLastWill>& last_will,
+                    MqttConnectAttempt::Cancellation cancellation) {
+        if (stopped.load() || !cancellation || cancellation->cancelled.load()) return;
+        connect_attempt.Begin(std::move(cancellation), MqttConnectAttempt::Clock::now());
+        CloseSocket(); state = MqttConnectionState::Connecting;
         Emit(MqttEventType::StateChanged, state, FormatMqttEndpointUri(endpoint));
         std::string error;
         if (!OpenSocket(endpoint, error)) {
-            if (cancel_connect.load()) CompleteCancelledConnect(); else Fail(std::move(error));
+            if (stopped.load() || connect_attempt.Cancelled()) CompleteCancelledConnect(); else Fail(std::move(error));
             return;
         }
 #if WIN32MQTT_ENABLE_TLS
         if (!ConfigureTransport(endpoint, error)) {
-            if (cancel_connect.load()) CompleteCancelledConnect(); else Fail(std::move(error));
+            if (stopped.load() || connect_attempt.Cancelled()) CompleteCancelledConnect(); else Fail(std::move(error));
             return;
         }
         mqtt_reinit(&client, transport, send_buffer.data(), send_buffer.size(), recv_buffer.data(), recv_buffer.size());
@@ -191,7 +238,7 @@ struct MqttSession::Impl {
         mqtt_reinit(&client, socket_handle, send_buffer.data(), send_buffer.size(), recv_buffer.data(), recv_buffer.size());
 #endif
         client_initialized = true;
-        if (cancel_connect.load()) { CompleteCancelledConnect(); return; }
+        if (stopped.load() || connect_attempt.Cancelled()) { CompleteCancelledConnect(); return; }
         const char* will_topic = last_will ? last_will->topic.c_str() : nullptr;
         const void* will_payload = last_will ? last_will->payload.data() : nullptr;
         const std::size_t will_payload_size = last_will ? last_will->payload.size() : 0;
@@ -206,6 +253,7 @@ struct MqttSession::Impl {
             &client, client_id.empty() ? nullptr : client_id.c_str(), will_topic, will_payload,
             will_payload_size, nullptr, nullptr, connect_flags, 60);
         if (result != MQTT_OK) { Fail(mqtt_error_str(result)); return; }
+        connect_attempt.Enter(MqttConnectAttempt::Phase::Connack, MqttConnectAttempt::Clock::now());
         awaiting_connack = true;
     }
     void FinishDisconnect(std::string detail = {}) {
@@ -225,6 +273,14 @@ struct MqttSession::Impl {
         state = MqttConnectionState::Disconnecting;
         Emit(MqttEventType::StateChanged, state);
     }
+    bool CheckConnecting() {
+        if (!awaiting_connack) return true;
+        std::string error;
+        if (ConnectionPending(error)) return true;
+        if (stopped.load() || connect_attempt.Cancelled()) CompleteCancelledConnect();
+        else Fail(std::move(error));
+        return false;
+    }
     void Sync() {
         if (state == MqttConnectionState::Disconnecting) {
             switch (disconnect.Poll(client, MqttDisconnect::Clock::now())) {
@@ -238,7 +294,9 @@ struct MqttSession::Impl {
         }
         if (!client_initialized ||
             (state != MqttConnectionState::Connecting && state != MqttConnectionState::Connected)) return;
+        if (!CheckConnecting()) return;
         const enum MQTTErrors result = mqtt_sync(&client);
+        if (!CheckConnecting()) return;
         if (result != MQTT_OK || client.error != MQTT_OK) { Fail(mqtt_error_str(result != MQTT_OK ? result : client.error)); return; }
         if (awaiting_connack && mqtt_mq_find(&client.mq, MQTT_CONTROL_CONNECT, nullptr) == nullptr) {
             awaiting_connack = false; state = MqttConnectionState::Connected; Emit(MqttEventType::StateChanged, state);
@@ -247,15 +305,15 @@ struct MqttSession::Impl {
     void Handle(Command command) {
         switch (command.type) {
         case CommandType::Connect:
+            if (!command.cancellation || command.cancellation->cancelled.load()) break;
             if (state == MqttConnectionState::Connected || state == MqttConnectionState::Disconnecting) {
                 next_connect = std::move(command);
                 BeginDisconnect();
             } else {
-                ConnectNow(command.endpoint, command.first, command.last_will);
+                ConnectNow(command.endpoint, command.first, command.last_will, std::move(command.cancellation));
             }
             break;
         case CommandType::Disconnect:
-            cancel_connect.store(true);
             next_connect.reset();
             BeginDisconnect();
             break;
@@ -290,7 +348,10 @@ struct MqttSession::Impl {
               wake.wait_for(lock, std::chrono::milliseconds(25), [this] {
                   return !commands.empty() || (stopped.load() && !stopping);
               });
-              pending.swap(commands); }
+              for (unsigned count = 0; count < 32 && !commands.empty(); ++count) {
+                  pending.push_back(std::move(commands.front()));
+                  commands.pop_front();
+              } }
             for (Command& command : pending) {
                 if (stopped.load()) break;
                 Handle(std::move(command));
@@ -306,7 +367,7 @@ struct MqttSession::Impl {
             if (!stopped.load() && state == MqttConnectionState::Disconnected && next_connect) {
                 Command command = std::move(*next_connect);
                 next_connect.reset();
-                ConnectNow(command.endpoint, command.first, command.last_will);
+                ConnectNow(command.endpoint, command.first, command.last_will, std::move(command.cancellation));
             }
         }
         CloseSocket();
@@ -315,7 +376,9 @@ struct MqttSession::Impl {
     }
 
     EventHandler handler; std::mutex mutex; std::condition_variable wake; std::deque<Command> commands; std::thread worker;
-    std::atomic<bool> stopped{false}; std::atomic<bool> cancel_connect{false}; bool stopping = false; bool awaiting_connack = false; bool client_initialized = false;
+    MqttConnectAttempt connect_attempt;
+    MqttConnectAttempt::Cancellation latest_connect; // Protected by mutex.
+    std::atomic<bool> stopped{false}; bool stopping = false; bool awaiting_connack = false; bool client_initialized = false;
     MqttDisconnect disconnect;
     std::optional<Command> next_connect;
     SOCKET socket_handle = INVALID_SOCKET;
@@ -335,7 +398,6 @@ void MqttSession::Connect(MqttEndpoint endpoint, std::string client_id,
                     MqttPublishQos::Qos0, std::move(last_will)});
 }
 void MqttSession::Disconnect() {
-    impl_->cancel_connect.store(true);
     impl_->Enqueue({Impl::CommandType::Disconnect, {}, {}, {}, MqttPublishQos::Qos0,
                     std::nullopt});
 }

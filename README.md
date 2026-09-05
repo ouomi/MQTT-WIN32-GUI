@@ -14,6 +14,8 @@ A traditional Unicode Win32 MQTT client built with ordinary Win32 controls. It c
 
 All builds support `mqtt://`; TLS builds also support `mqtts://`. Network work runs on a dedicated session thread; Win32 controls are updated only by events posted to the UI thread.
 
+Connections require Windows 8 or later for cancellable asynchronous DNS. DNS has a 5-second deadline; TCP (across all resolved addresses), TLS, and MQTT CONNACK each have a 10-second deadline. Disconnect, Stop, or a replacement connection cancels the pending attempt without resetting its cancellation flag. An established connection gets up to 1 second to send MQTT DISCONNECT during normal shutdown.
+
 ## Build Windows executables from Linux
 
 Install CMake, Ninja, Git, and both MinGW-w64 cross-toolchains:
