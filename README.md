@@ -25,6 +25,18 @@ TLS 版使用 OpenSSL 验证证书链和服务器身份，最低 TLS 1.2。请�
 
 需要 **CMake 3.20+、Ninja** 和所选架构的 **MinGW-w64 C/C++ 编译器及 windres**。只构建 64 位时，不需要安装 32 位工具链。
 
+准备好依赖后，可使用一键脚本（Linux/Bash）：
+
+```sh
+./scripts/build.sh                            # 默认：64 位 TCP 版
+./scripts/build.sh mingw32-notls-release       # 32 位 TCP 版
+./scripts/build.sh mingw64-tls-release -j 4    # 64 位 TLS 版，4 个并行任务
+./scripts/build.sh native-tests               # 编译并运行本地测试
+./scripts/build.sh --help
+```
+
+脚本自动完成配置、增量编译和安装，完整程序包位于 `dist/<preset>/`。可以从任意目录调用脚本；TLS 版需先按下文安装 OpenSSL 并设置 `VCPKG_ROOT`。
+
 最简单的 64 位非 TLS 构建不依赖 OpenSSL：
 
 ```sh
@@ -118,6 +130,18 @@ TLS builds use OpenSSL to verify the certificate chain and server identity, with
 ### Build from Linux
 
 Install **CMake 3.20+, Ninja**, and the **MinGW-w64 C/C++ compilers and windres** for your chosen architecture. A 64-bit build does not require the 32-bit toolchain.
+
+Once dependencies are installed, use the one-command script (Linux/Bash):
+
+```sh
+./scripts/build.sh                            # Default: x64 TCP-only
+./scripts/build.sh mingw32-notls-release       # x86 TCP-only
+./scripts/build.sh mingw64-tls-release -j 4    # x64 TLS, 4 parallel jobs
+./scripts/build.sh native-tests               # Build and run native tests
+./scripts/build.sh --help
+```
+
+The script configures, builds incrementally, and installs the complete package into `dist/<preset>/`. It can be invoked from any directory. TLS builds require OpenSSL and `VCPKG_ROOT` as described below.
 
 The simplest 64-bit TCP-only build needs no OpenSSL:
 
