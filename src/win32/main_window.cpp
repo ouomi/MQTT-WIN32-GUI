@@ -1,5 +1,6 @@
 #include "main_window.h"
 #include "../mqtt/mqtt_topic.hpp"
+#include "../settings_autosave.hpp"
 
 #include <commctrl.h>
 #include <windowsx.h>
@@ -174,6 +175,49 @@ struct MainWindow::Impl {
         }
     }
 
+    AppSettings CurrentSettings() {
+        CaptureNormalWindowSize();
+        return {language, connection.ServerUri(), connection.ClientId(), subscriptions.Snapshot(),
+                settings.window_width, settings.window_height};
+    }
+
+    void ScheduleSettingsSave(std::uint64_t delay = 0) {
+        if (!controls_ready) return;
+        autosave.Schedule(CurrentSettings(), GetTickCount64(), delay);
+        if (delay == 0) SavePendingSettings();
+    }
+
+    void SavePendingSettings(bool closing = false) {
+        const auto result = autosave.Poll(GetTickCount64(),
+            [](const AppSettings& snapshot) { return SaveAppSettings(snapshot); }, closing);
+        if (result == SettingsAutosave::Result::Idle) {
+            if (save_failed && !autosave.Pending()) {
+                save_failed = false;
+                if (!closing) UpdateConnectionUi();
+            }
+            return;
+        }
+        if (result == SettingsAutosave::Result::Failed) {
+            const wchar_t* detail = language == AppLanguage::Chinese
+                ? L"配置保存失败，原配置已保留。改动仍在内存中，将自动重试。请检查程序目录的写入权限和磁盘空间。"
+                : L"Settings could not be saved. Previous settings were preserved. Changes remain in memory and will be retried. Check directory permissions and disk space.";
+            if (closing) {
+                MessageBoxW(window, language == AppLanguage::Chinese
+                    ? L"配置保存失败，最新改动未能保存。原配置已保留。请检查程序目录的写入权限和磁盘空间。"
+                    : L"Settings could not be saved. Latest changes were not saved; previous settings were preserved. Check directory permissions and disk space.",
+                    L"WIN32 MQTT", MB_OK | MB_ICONERROR);
+            } else if (!save_failed) {
+                messages.Append(detail);
+            }
+            save_failed = true;
+        } else {
+            if (save_failed && !closing) messages.Append(language == AppLanguage::Chinese
+                ? L"配置已成功保存。" : L"Settings saved successfully.");
+            save_failed = false;
+        }
+        if (!closing) UpdateConnectionUi();
+    }
+
     void CreateControls() {
         connection.Create(window, language, connection_state, settings.server_uri,
                           settings.client_id);
@@ -192,9 +236,10 @@ struct MainWindow::Impl {
         connection.UpdateText(language, connection_state);
         will.UpdateText(language, connection_state);
         publisher.SetConnected(connection_state == MqttConnectionState::Connected);
-        SendMessageW(status, SB_SETTEXTW, 0,
-                     reinterpret_cast<LPARAM>(Text(language,
-                                                   ConnectionStatusText(connection_state)).data()));
+        const wchar_t* status_text = save_failed
+            ? (language == AppLanguage::Chinese ? L"配置未保存，正在重试" : L"Settings not saved; retrying")
+            : Text(language, ConnectionStatusText(connection_state)).data();
+        SendMessageW(status, SB_SETTEXTW, 0, reinterpret_cast<LPARAM>(status_text));
     }
 
     void Layout(int width, int height) const {
@@ -293,6 +338,7 @@ struct MainWindow::Impl {
         if (changes.active_topics_changed) {
             publisher.SetTopics(subscriptions.ActiveTopics());
         }
+        ScheduleSettingsSave();
     }
 
     void HandleConnectionRequest(const ConnectionPanelRequest& request) {
@@ -420,6 +466,10 @@ struct MainWindow::Impl {
         }
     }
 
+    SettingsAutosave autosave;
+    bool controls_ready = false;
+    bool resizing = false;
+    bool save_failed = false;
     HWND window{};
     ConnectionPanel connection;
     SubscriptionPanel subscriptions;
@@ -491,6 +541,8 @@ LRESULT CALLBACK MainWindow::WindowProc(HWND window, UINT message, WPARAM wparam
         app.CreateControls();
         if (!SetTimer(window, Impl::MqttEventTimer, 50, nullptr)) return -1;
         app.mqtt = std::make_unique<MqttSession>(app.mqtt_events.Handler());
+        app.controls_ready = true;
+        app.ScheduleSettingsSave(500);
         return 0;
     case WM_GETMINMAXINFO: {
         auto* min_max = reinterpret_cast<MINMAXINFO*>(lparam);
@@ -498,8 +550,16 @@ LRESULT CALLBACK MainWindow::WindowProc(HWND window, UINT message, WPARAM wparam
         min_max->ptMinTrackSize.y = kMinimumWindowHeight;
         return 0;
     }
+    case WM_ENTERSIZEMOVE:
+        app.resizing = true;
+        return 0;
+    case WM_EXITSIZEMOVE:
+        app.resizing = false;
+        app.ScheduleSettingsSave();
+        return 0;
     case WM_SIZE:
         app.Layout(LOWORD(lparam), HIWORD(lparam));
+        if (!app.resizing && wparam != SIZE_MINIMIZED) app.ScheduleSettingsSave(500);
         return 0;
     case WM_SETCURSOR:
         if (LOWORD(lparam) == HTCLIENT) {
@@ -561,6 +621,7 @@ LRESULT CALLBACK MainWindow::WindowProc(HWND window, UINT message, WPARAM wparam
     case WM_TIMER:
         if (wparam == Impl::MqttEventTimer) {
             app.PollMqttEvents();
+            app.SavePendingSettings();
             return 0;
         }
         break;
@@ -571,6 +632,7 @@ LRESULT CALLBACK MainWindow::WindowProc(HWND window, UINT message, WPARAM wparam
         }
         break;
     case WM_NOTIFY: {
+        if (!app.controls_ready) break;
         SubscriptionPanelChanges changes = app.subscriptions.HandleNotification(
             app.language, *reinterpret_cast<const NMHDR*>(lparam));
         if (changes.handled) {
@@ -587,6 +649,10 @@ LRESULT CALLBACK MainWindow::WindowProc(HWND window, UINT message, WPARAM wparam
     case WM_COMMAND: {
         const WORD id = LOWORD(wparam);
         const WORD notification = HIWORD(wparam);
+        if ((id == IDC_SERVER_URI || id == IDC_CLIENT_ID) && notification == EN_CHANGE) {
+            app.ScheduleSettingsSave(500);
+            return 0;
+        }
         ConnectionPanelRequest connection_request;
         if (app.connection.HandleCommand(id, notification, app.connection_state,
                                          connection_request)) {
@@ -622,16 +688,17 @@ LRESULT CALLBACK MainWindow::WindowProc(HWND window, UINT message, WPARAM wparam
         }
         break;
     }
-    case WM_DESTROY:
-        app.CaptureNormalWindowSize();
-        if (!SaveAppSettings({app.language, app.connection.ServerUri(), app.connection.ClientId(),
-                         app.subscriptions.Snapshot(), app.settings.window_width,
-                         app.settings.window_height})) {
-            MessageBoxW(nullptr,
-                app.language == AppLanguage::Chinese ? L"配置保存失败，原配置已保留。请检查程序目录的写入权限和磁盘空间。" :
-                    L"Settings could not be saved. Previous settings were preserved. Check directory permissions and disk space.",
-                L"WIN32 MQTT", MB_OK | MB_ICONERROR);
+    case WM_CLOSE:
+        KillTimer(window, Impl::MqttEventTimer);
+        // Child controls are still alive here; capture text before DestroyWindow.
+        if (app.controls_ready) {
+            app.autosave.Schedule(app.CurrentSettings(), GetTickCount64(), 0);
+            app.SavePendingSettings(true);
         }
+        DestroyWindow(window);
+        return 0;
+    case WM_DESTROY:
+        app.controls_ready = false;
         KillTimer(window, Impl::MqttEventTimer);
         app.mqtt_events.Close();
         if (app.mqtt) {

@@ -6,6 +6,7 @@
 #include "mqtt/mqtt_topic.hpp"
 #include "subscription_catalog.hpp"
 #include "settings_codec.hpp"
+#include "settings_autosave.hpp"
 
 namespace {
 
@@ -16,6 +17,58 @@ void Check(bool condition, const char* message) {
         std::cerr << "FAILED: " << message << '\n';
         ++failures;
     }
+}
+
+void TestSettingsAutosave() {
+    using namespace win32mqtt;
+    using Result = SettingsAutosave::Result;
+    SettingsAutosave autosave;
+    AppSettings input{AppLanguage::English, L"mqtt://localhost", L"client",
+        {{L"keep", true}, {L"delete", false, true}, {L"inactive", false}}, 900, 600};
+    AppSettings disk{};
+    int writes = 0;
+    auto save = [&](const AppSettings& value) { ++writes; disk = value; return true; };
+    autosave.Schedule(input, 0, 500);
+    Check(autosave.Poll(499, save) == Result::Idle && writes == 0, "typing is debounced");
+    input.client_id = L"edited";
+    autosave.Schedule(input, 400, 500);
+    Check(autosave.Poll(500, save) == Result::Idle, "further typing restarts delay");
+    Check(autosave.Poll(900, save) == Result::Saved && disk.client_id == L"edited",
+          "latest input is persisted after idle delay");
+    Check(disk.subscriptions.size() == 2 && disk.subscriptions[1].topic == L"inactive" &&
+          !disk.subscriptions[1].active, "pending deletion excluded while inactive subscription retained");
+    SubscriptionCatalog restored;
+    restored.Replace(disk.subscriptions);
+    Check(restored.Find(L"delete") == SubscriptionCatalog::npos, "deleted subscription does not reappear after restore");
+    autosave.Schedule(input, 1000, 0);
+    Check(autosave.Poll(1000, save) == Result::Idle && writes == 1, "unchanged notifications do not write again");
+    input.subscriptions[0].active = false;
+    autosave.Schedule(input, 1100, 0);
+    Check(autosave.Poll(1100, save) == Result::Saved && !disk.subscriptions[0].active,
+          "checkbox changes persist immediately");
+    input.server_uri = L"mqtt://new-host";
+    autosave.Schedule(input, 1200, 500);
+    Check(autosave.Poll(1201, save, true) == Result::Saved && disk.server_uri == input.server_uri,
+          "close flushes edits before debounce expires");
+    input.client_id = L"retry";
+    autosave.Schedule(input, 1300, 0);
+    auto fail = [](const AppSettings&) { return false; };
+    Check(autosave.Poll(1300, fail) == Result::Failed && disk.client_id == L"edited",
+          "failed save preserves previous snapshot");
+    Check(autosave.Poll(6299, save) == Result::Idle, "failed save does not spin");
+    Check(autosave.Poll(6300, save) == Result::Saved && disk.client_id == L"retry",
+          "failed save retains pending changes for retry");
+    input.client_id = L"temporary";
+    autosave.Schedule(input, 6400, 500);
+    input.client_id = L"retry";
+    autosave.Schedule(input, 6500, 500);
+    Check(autosave.Poll(7000, save) == Result::Idle, "reverting edits cancels unnecessary write");
+    input.client_id = L"failed-edit";
+    autosave.Schedule(input, 7100, 0);
+    Check(autosave.Poll(7100, fail) == Result::Failed && autosave.Pending(), "failed edits remain pending");
+    input.client_id = disk.client_id;
+    autosave.Schedule(input, 7200, 500);
+    Check(!autosave.Pending(), "reverting failed edit clears unsaved state");
 }
 
 void TestEndpointParsing() {
@@ -128,6 +181,7 @@ int main() {
     const std::wstring sensitive = L" \"quoted\"\t\r\n;= 中文 ";
     Check(win32mqtt::DecodeSetting(win32mqtt::EncodeSetting(sensitive)) == sensitive, "INI values round trip losslessly");
     Check(!win32mqtt::DecodeSetting(L"0000000z"), "malformed encoding rejected");
+    TestSettingsAutosave();
     TestEndpointParsing();
     TestSubscriptionCatalog();
     TestTopicValidation();

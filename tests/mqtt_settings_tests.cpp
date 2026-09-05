@@ -24,6 +24,13 @@ int main() {
     check(LoadAppSettings(AppLanguage::English, path).client_id == original.client_id, "old file preserved on validation failure");
     check(!SaveAppSettings(original, path + L"\\missing\\settings.ini"), "creation failure visible");
     check(SaveAppSettings(original, path), "subsequent save recovers");
+    changed = original;
+    changed.subscriptions.push_back({L"pending-delete", false, true});
+    changed.subscriptions.push_back({L"inactive", false});
+    check(SaveAppSettings(changed, path), "save excludes pending deletion");
+    loaded = LoadAppSettings(AppLanguage::English, path);
+    check(loaded.subscriptions.size() == 2 && loaded.subscriptions[1].topic == L"inactive" &&
+        !loaded.subscriptions[1].active, "pending deletion stays deleted after INI reload");
     DeleteFileW(path.c_str());
     std::cout << "Windows settings atomic save tests passed\n";
 }

@@ -1,5 +1,6 @@
 #include "app_settings.h"
 #include "../settings_codec.hpp"
+#include "../settings_autosave.hpp"
 
 #include <windows.h>
 
@@ -137,7 +138,8 @@ AppSettings LoadAppSettings(AppLanguage fallback_language, const std::wstring& s
     return settings;
 }
 
-bool SaveAppSettings(const AppSettings& settings, const std::wstring& settings_path) {
+bool SaveAppSettings(const AppSettings& input, const std::wstring& settings_path) {
+    const AppSettings settings = PersistentSettings(input);
     const std::wstring path = settings_path.empty() ? SettingsFilePath() : settings_path;
     if (path.empty() || settings.subscriptions.size() > kMaxSavedSubscriptions) return false;
     // Serialize the entire UTF-16 file before touching the existing settings.

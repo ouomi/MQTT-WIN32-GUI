@@ -17,7 +17,7 @@ A small Windows MQTT debugging tool built with native Win32 controls. Connect to
 3. 点击连接，添加并勾选需要订阅的主题过滤器，例如 `sensors/#`。
 4. 在发布区独立输入主题，例如 `sensors/temperature`，选择 QoS 并发送。
 
-发布支持 QoS 0/1/2 和空消息，无需先订阅。界面支持中文和英文。连接地址、客户端 ID、订阅和部分界面设置保存在 EXE 旁的 `WIN32-MQTT.ini`。
+发布支持 QoS 0/1/2 和空消息，无需先订阅。界面支持中文和英文。连接地址、客户端 ID、订阅和部分界面设置自动保存在 EXE 旁的 `WIN32-MQTT.ini`。订阅改动立即保存，连接字段停止输入约 500 毫秒后保存，窗口大小在调整结束后保存；关闭窗口时补存尚未保存的改动。待删除订阅不会写回配置。
 
 TLS 版使用 OpenSSL 验证证书链和服务器身份，最低 TLS 1.2。请将 EXE、OpenSSL DLL 和 `ca-bundle.pem` 保持在同一目录，并保留许可证文件。非 TLS 版仅支持 `mqtt://`。
 
@@ -90,7 +90,7 @@ dist/<release-preset>/         可直接打包分发的完整目录
 - 发布主题不能带 `+` 或 `#`；订阅过滤器可以使用合法的通配符。
 - 发布区输入 UTF-8 文本；接收消息支持 Text/HEX 切换，保留原始字节和 QoS、retain、dup、Packet ID，最多保留 512 条 / 1 MiB 原始数据。
 - 订阅目录最多 256 条，过滤器最多 4088 个 UTF-8 字节。勾选表示期望状态，状态列显示同步、确认及拒绝；断线后逐项恢复，删除等待退订结束。
-- 配置先完整写入临时文件再替换；保存失败会提示并保留原配置。新格式仍支持读取旧 INI，但旧版本程序不能读取新格式的编码值。
+- 配置先完整写入临时文件再替换；保存失败会在日志和状态栏提示并保留原配置，保留内存改动，每 5 秒重试；关闭时仍失败会弹窗提示。新格式仍支持读取旧 INI，但旧版本程序不能读取新格式的编码值。
 - 发布“已排队”表示本地排队成功，不代表对端已经收到或业务已经处理。
 - 日志有保留上限，高流量下可能丢弃显示事件并提示丢弃数量；日志不保存到磁盘。
 
@@ -111,7 +111,7 @@ Requires **Windows 8 or later**. Open `WIN32-MQTT.exe` from the distribution dir
 3. Connect, add subscription filters such as `sensors/#`, and tick their checkboxes.
 4. Enter a separate publish topic such as `sensors/temperature`, choose a QoS, and send.
 
-Publishing supports QoS 0/1/2 and empty messages without requiring a subscription. The UI supports Chinese and English. The server URI, client ID, subscriptions, and some display settings are saved in `WIN32-MQTT.ini` beside the EXE.
+Publishing supports QoS 0/1/2 and empty messages without requiring a subscription. The UI supports Chinese and English. The server URI, client ID, subscriptions, and some display settings are automatically saved in `WIN32-MQTT.ini` beside the EXE. Subscription changes save immediately; connection fields save after about 500 ms of idle typing; window dimensions save when resizing ends. Closing flushes pending edits. Pending deletions are excluded from saved subscriptions. Failed saves retain edits in memory, report the failure in the log and status bar, and retry every 5 seconds; a failed final save shows a dialog.
 
 TLS builds use OpenSSL to verify the certificate chain and server identity, with TLS 1.2 as the minimum. Keep the EXE, OpenSSL DLLs, and `ca-bundle.pem` together, along with the license files. TCP-only builds support `mqtt://` only.
 
