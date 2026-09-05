@@ -1,5 +1,7 @@
 #include "publish_panel.h"
 
+#include <commctrl.h>
+
 #include <algorithm>
 #include <string>
 
@@ -20,6 +22,31 @@ constexpr int kPublishQosWidth = 72;
 constexpr int kPublishTopicDropDownHeight = 180;
 constexpr int kRowHeight = 23;
 
+// The popup is a separate window. Constrain its actual size after the combo
+// has calculated it, including when it reuses the size of a previously full list.
+LRESULT CALLBACK TopicListSubclassProc(HWND window, UINT message, WPARAM wparam,
+                                       LPARAM lparam, UINT_PTR subclass_id,
+                                       DWORD_PTR /*reference_data*/) {
+    if (message == WM_WINDOWPOSCHANGING) {
+        const LRESULT result = DefSubclassProc(window, message, wparam, lparam);
+        auto* position = reinterpret_cast<WINDOWPOS*>(lparam);
+        if (!(position->flags & SWP_NOSIZE) &&
+            SendMessageW(window, LB_GETCOUNT, 0, 0) == 0) {
+            RECT frame{};
+            AdjustWindowRectEx(&frame,
+                              static_cast<DWORD>(GetWindowLongPtrW(window, GWL_STYLE)),
+                              FALSE,
+                              static_cast<DWORD>(GetWindowLongPtrW(window, GWL_EXSTYLE)));
+            position->cy = std::max<LONG>(1, frame.bottom - frame.top);
+        }
+        return result;
+    }
+    if (message == WM_NCDESTROY) {
+        RemoveWindowSubclass(window, TopicListSubclassProc, subclass_id);
+    }
+    return DefSubclassProc(window, message, wparam, lparam);
+}
+
 } // namespace
 
 void PublishPanel::Create(HWND parent, AppLanguage language) {
@@ -29,6 +56,11 @@ void PublishPanel::Create(HWND parent, AppLanguage language) {
     topic_label_ = AddText(parent, 60008, L"");
     topic_ = AddControl(L"COMBOBOX", CBS_DROPDOWN | CBS_AUTOHSCROLL | WS_VSCROLL,
                         IDC_PUB_TOPIC, parent, WS_EX_CLIENTEDGE);
+    COMBOBOXINFO topic_info{};
+    topic_info.cbSize = sizeof(topic_info);
+    if (GetComboBoxInfo(topic_, &topic_info)) {
+        SetWindowSubclass(topic_info.hwndList, TopicListSubclassProc, 0, 0);
+    }
     qos_label_ = AddText(parent, 60009, L"");
     qos_ = AddControl(L"COMBOBOX", CBS_DROPDOWNLIST | WS_VSCROLL,
                       IDC_PUB_QOS, parent, WS_EX_CLIENTEDGE);
@@ -85,6 +117,10 @@ void PublishPanel::SetTopics(const std::vector<std::wstring>& topics) const {
     }
     // Suggestions must never replace a manually entered publishing destination.
     SetWindowTextW(topic_, previously_selected.c_str());
+    if (SendMessageW(topic_, CB_GETCOUNT, 0, 0) == 0) {
+        // Close a popup that was already open when its last suggestion vanished.
+        SendMessageW(topic_, CB_SHOWDROPDOWN, FALSE, 0);
+    }
 }
 
 bool PublishPanel::HandleCommand(HWND owner, AppLanguage language, WORD id, WORD notification,
