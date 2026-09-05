@@ -64,7 +64,11 @@ SOFTWARE.
  */
 
 
-/* This in-tree copy is intentionally Windows-only. */
+/* Tests may supply a platform adapter without linking Windows networking. */
+#if defined(MQTT_CUSTOM_PAL_HEADER)
+#include MQTT_CUSTOM_PAL_HEADER
+#else
+/* The application platform adapter is Windows-only. */
 #include <limits.h>
 #include <winsock2.h>
 #include <windows.h>
@@ -93,6 +97,8 @@ typedef CRITICAL_SECTION mqtt_pal_mutex_t;
         typedef SOCKET mqtt_pal_socket_handle;
     #endif
 #endif
+
+#endif /* MQTT_CUSTOM_PAL_HEADER */
 
 /**
  * @brief Sends all the bytes in a buffer.

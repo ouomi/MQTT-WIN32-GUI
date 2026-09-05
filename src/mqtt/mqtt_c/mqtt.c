@@ -1345,6 +1345,7 @@ ssize_t mqtt_unpack_publish_response(struct mqtt_response *mqtt_response, const 
     const uint8_t *const start = buf;
     struct mqtt_fixed_header *fixed_header;
     struct mqtt_response_publish *response;
+    size_t remaining;
     
     fixed_header = &(mqtt_response->fixed_header);
     response = &(mqtt_response->decoded.publish);
@@ -1354,29 +1355,39 @@ ssize_t mqtt_unpack_publish_response(struct mqtt_response *mqtt_response, const 
     response->qos_level = (fixed_header->control_flags & MQTT_PUBLISH_QOS_MASK) >> 1;
     response->retain_flag = fixed_header->control_flags & MQTT_PUBLISH_RETAIN;
 
-    /* make sure that remaining length is valid */
-    if (mqtt_response->fixed_header.remaining_length < 4) {
+    /* The caller has checked that the complete remaining body is buffered.
+     * Check each field before reading it or advancing the pointer. */
+    remaining = fixed_header->remaining_length;
+    if (remaining < 2 || response->qos_level == 3) {
         return MQTT_ERROR_MALFORMED_RESPONSE;
     }
 
-    /* parse variable header */
     response->topic_name_size = win32mqtt_unpack_uint16(buf);
     buf += 2;
+    remaining -= 2;
+    if (response->topic_name_size == 0 || response->topic_name_size > remaining) {
+        return MQTT_ERROR_MALFORMED_RESPONSE;
+    }
     response->topic_name = buf;
     buf += response->topic_name_size;
+    remaining -= response->topic_name_size;
 
+    response->packet_id = 0;
     if (response->qos_level > 0) {
+        if (remaining < 2) {
+            return MQTT_ERROR_MALFORMED_RESPONSE;
+        }
         response->packet_id = win32mqtt_unpack_uint16(buf);
+        if (response->packet_id == 0) {
+            return MQTT_ERROR_MALFORMED_RESPONSE;
+        }
         buf += 2;
+        remaining -= 2;
     }
 
-    /* get payload */
+    /* An empty payload is valid at every QoS level. */
     response->application_message = buf;
-    if (response->qos_level == 0) {
-        response->application_message_size = fixed_header->remaining_length - response->topic_name_size - 2;
-    } else {
-        response->application_message_size = fixed_header->remaining_length - response->topic_name_size - 4;
-    }
+    response->application_message_size = remaining;
     buf += response->application_message_size;
     
     /* return number of bytes consumed */

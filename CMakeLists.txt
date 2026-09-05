@@ -1,17 +1,27 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(win32mqtt VERSION 0.1.0 LANGUAGES C CXX RC)
+project(win32mqtt VERSION 0.1.0 LANGUAGES C CXX)
 
 include(CTest)
 
 option(WIN32MQTT_ENABLE_TLS "Enable mqtts:// using OpenSSL" ON)
 option(WIN32MQTT_OPENSSL_DYNAMIC "Bundle OpenSSL DLLs beside WIN32-MQTT.exe" ON)
 
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()
+
 if(NOT WIN32)
+    if(BUILD_TESTING)
+        message(STATUS "Building native tests only; the GUI requires Windows or MinGW.")
+        return()
+    endif()
     message(FATAL_ERROR
-        "WIN32-MQTT is a Win32 GUI application. On Linux, configure it with "
+        "WIN32-MQTT is a Win32 GUI application. On Linux, enable BUILD_TESTING or use "
         "-DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/mingw64.cmake.")
 endif()
+
+enable_language(RC)
 
 add_executable(win32mqtt WIN32
     resources/app.rc
@@ -41,25 +51,6 @@ set_target_properties(win32mqtt PROPERTIES OUTPUT_NAME "WIN32-MQTT")
 target_compile_features(win32mqtt PRIVATE c_std_99 cxx_std_17)
 target_include_directories(win32mqtt PRIVATE src/mqtt/mqtt_c)
 
-if(BUILD_TESTING)
-    add_executable(win32mqtt_core_tests
-        tests/core_module_tests.cpp
-        src/mqtt/mqtt_endpoint.cpp
-        src/mqtt/mqtt_endpoint.hpp
-        src/subscription_catalog.cpp
-        src/subscription_catalog.hpp
-    )
-    target_compile_features(win32mqtt_core_tests PRIVATE cxx_std_17)
-    target_include_directories(win32mqtt_core_tests PRIVATE src)
-    if(MSVC)
-        target_compile_options(win32mqtt_core_tests PRIVATE /W4 /permissive-)
-    else()
-        target_compile_options(win32mqtt_core_tests PRIVATE -Wall -Wextra -Wpedantic)
-    endif()
-    if(NOT CMAKE_CROSSCOMPILING OR CMAKE_CROSSCOMPILING_EMULATOR)
-        add_test(NAME win32mqtt_core_modules COMMAND win32mqtt_core_tests)
-    endif()
-endif()
 target_compile_definitions(win32mqtt PRIVATE
     UNICODE
     _UNICODE

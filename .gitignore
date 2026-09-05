@@ -6,5 +6,5 @@ mingw64-tls-release/
 mingw32-notls-release/
 mingw32-tls-release/
 release-artifacts/
+scripts/
 AGENTS.md
-scripts/publish-release.sh
