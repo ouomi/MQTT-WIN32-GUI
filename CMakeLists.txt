@@ -37,6 +37,7 @@ add_executable(win32mqtt WIN32
     resources/app.rc
     src/win32/main.cpp
     src/win32/main_window.cpp
+    src/settings_document.cpp
     src/win32/app_settings.cpp
     src/win32/app_settings.h
     src/win32/control_helpers.cpp

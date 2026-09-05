@@ -18,7 +18,14 @@ struct AppSettings {
     int subscription_panel_width{}; // Zero uses the default equal split.
 };
 
-AppSettings LoadAppSettings(AppLanguage fallback_language, const std::wstring& path = {});
+struct AppSettingsLoadResult {
+    AppSettings settings{};
+    std::wstring path;
+    std::wstring error;
+    bool Succeeded() const { return error.empty(); }
+};
+
+AppSettingsLoadResult LoadAppSettings(AppLanguage fallback_language, const std::wstring& path = {});
 bool SaveAppSettings(const AppSettings& settings, const std::wstring& path = {});
 
 } // namespace win32mqtt

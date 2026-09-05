@@ -30,9 +30,9 @@ ctest --preset native-tests-asan
 
 The sanitizer test preset enables LeakSanitizer and makes UBSan stop on errors. LeakSanitizer may not run under ptrace-based debuggers or sandboxes; run it in a supported environment rather than treating an environment error as a pass.
 
-OpenSSL 开发库可选：Linux 上可用时运行 13 项测试，否则运行 11 项并明确跳过 BIO/TLS。若要显式验证无 OpenSSL 的构建，使用独立目录：
+OpenSSL 开发库可选：Linux 上可用时运行 14 项测试，否则运行 12 项并明确跳过 BIO/TLS。若要显式验证无 OpenSSL 的构建，使用独立目录：
 
-OpenSSL development libraries are optional: 13 tests run on Linux when available, otherwise 11 run and BIO/TLS are explicitly skipped. To check a build without OpenSSL, use a separate directory:
+OpenSSL development libraries are optional: 14 tests run on Linux when available, otherwise 12 run and BIO/TLS are explicitly skipped. To check a build without OpenSSL, use a separate directory:
 
 ```sh
 cmake --preset native-tests -B build/tests-no-openssl -DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON
@@ -60,6 +60,7 @@ CTest and executable names match: `win32mqtt_<name>_tests`. Component tests have
 | `socket` | `transport` | Winsock 适配器的短读写、WOULDBLOCK、EOF / Winsock adapter partial I/O, WOULDBLOCK, and EOF |
 | `session` | `connection` | 生产工作线程、100 个长主题恢复与退订、队列满恢复、可靠结果、迟到发布确认及 200 条 QoS 2 突发后连接保持、替代连接、失活、停止及取消 / Production worker orchestration, late publish ACKs and 200-message QoS 2 burst recovery (Linux) |
 | `tls` | `transport` | 真实证书验证与 TLS 握手、WANT_READ/WANT_WRITE、移动写缓冲、普通 BIO 双向推进 / Real verified TLS handshake and retry scheduling |
+| `settings_document` | `core` | UTF-8 可读配置往返、严格字段和格式校验、畸形输入拒绝 / Readable UTF-8 round trips, strict schema validation, malformed input rejection |
 | `settings` | `core` | Windows 原子替换、不可写目标、容量失败保留旧文件、INI 精确往返 / Windows atomic replacement and persistence failures |
 | `bio` | `transport` | OpenSSL BIO 重试和有限缓冲区 / OpenSSL BIO retries and bounded buffers |
 

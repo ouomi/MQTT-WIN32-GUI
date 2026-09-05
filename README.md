@@ -102,7 +102,7 @@ dist/<release-preset>/         可直接打包分发的完整目录
 - 发布主题不能带 `+` 或 `#`；订阅过滤器可以使用合法的通配符。
 - 发布区输入 UTF-8 文本；接收消息支持 Text/HEX 切换，保留原始字节和 QoS、retain、dup、Packet ID，最多保留 512 条 / 1 MiB 原始数据。
 - 订阅目录最多 256 条，过滤器最多 4088 个 UTF-8 字节。勾选表示期望状态，状态列显示同步、确认及拒绝；断线后逐项恢复，删除等待退订结束。
-- 配置先完整写入临时文件再替换；保存失败会在日志和状态栏提示并保留原配置，保留内存改动，每 5 秒重试；关闭时仍失败会弹窗提示。新格式仍支持读取旧 INI，但旧版本程序不能读取新格式的编码值。
+- 配置先完整写入临时文件再替换；保存失败会在日志和状态栏提示并保留原配置，保留内存改动，每 5 秒重试；关闭时仍失败会弹窗提示。配置使用可读 UTF-8 文本，不再兼容旧编码。启动前严格检查，配置异常会提示原因并停止启动，保留原文件。格式和手工编辑规则见[配置说明](docs/CONFIGURATION.md)。
 - 发布“已排队”表示本地排队成功，不代表对端已经收到或业务已经处理。
 - 日志有保留上限，高流量下可能丢弃显示事件并提示丢弃数量；日志不保存到磁盘。
 
@@ -208,7 +208,7 @@ The install step creates `dist/`, containing the EXE, licenses, and the CA and D
 - Publish topics cannot contain `+` or `#`; subscription filters support valid wildcards.
 - Publishing accepts UTF-8 text. Received messages offer Text/HEX views with raw bytes, QoS, retain, dup and Packet ID; raw retention is bounded to 512 records / 1 MiB.
 - The subscription catalog holds up to 256 records with filters up to 4088 UTF-8 bytes. Checkboxes express desired state; the status column shows synchronization, acknowledgements and rejection. Reconnection restores subscriptions incrementally; deletion waits for unsubscription.
-- Settings are written completely to a temporary file before replacement. Failures are visible and preserve the previous file. New builds read legacy INI files; old builds cannot read the new encoded values.
+- Settings are written completely to a temporary file before replacement. Failures are visible and preserve the previous file. Settings use readable UTF-8 text; previous encodings are unsupported. Invalid configuration stops startup with an error and leaves the file unchanged. See the [configuration guide](docs/CONFIGURATION.md) for the format and editing rules.
 - “Publish queued” means accepted into the local queue, not received by the peer or processed by an application.
 - Logs have bounded retention. Heavy traffic may drop display events with a reported count; logs are not saved to disk.
 

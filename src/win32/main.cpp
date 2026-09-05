@@ -10,8 +10,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
     // Keep every common control on the pre-visual-style rendering path.
     SetThemeAppProperties(0);
 
-    const win32mqtt::AppSettings settings =
-        win32mqtt::LoadAppSettings(win32mqtt::DefaultAppLanguage());
+    const auto loaded = win32mqtt::LoadAppSettings(win32mqtt::DefaultAppLanguage());
+    if (!loaded.Succeeded()) {
+        const std::wstring message =
+            L"配置文件无效或无法读取，程序未启动，原文件未修改。\r\n"
+            L"Configuration is invalid or unreadable. Startup stopped; the file was not changed.\r\n\r\n" +
+            loaded.path + L"\r\n\r\n" + loaded.error +
+            L"\r\n\r\n请修正配置，或重命名配置文件后重新启动以使用默认设置。\r\n"
+            L"Fix the file, or rename it and restart to use defaults.";
+        win32mqtt::ShowClassicMessageBox(nullptr, message.c_str(), L"WIN32 MQTT", MB_OK | MB_ICONERROR);
+        return 1;
+    }
+    const auto& settings = loaded.settings;
     const win32mqtt::AppLanguage language = settings.language;
     win32mqtt::MainWindow main_window(settings);
 

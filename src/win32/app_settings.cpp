@@ -1,35 +1,13 @@
 #include "app_settings.h"
-#include "../settings_codec.hpp"
+#include "../settings_document.hpp"
 #include "../settings_autosave.hpp"
 
 #include <windows.h>
-
-#include <algorithm>
-#include <cwchar>
-#include <limits>
-#include <string>
-#include <utility>
 #include <vector>
 
 namespace win32mqtt {
 namespace {
-
 constexpr wchar_t kSettingsFileName[] = L"WIN32-MQTT.ini";
-constexpr wchar_t kDisplaySection[] = L"Display";
-constexpr wchar_t kConnectionSection[] = L"Connection";
-constexpr wchar_t kSubscriptionsSection[] = L"Subscriptions";
-constexpr wchar_t kWindowSection[] = L"Window";
-constexpr wchar_t kLanguageKey[] = L"Language";
-constexpr wchar_t kServerUriKey[] = L"ServerUri";
-constexpr wchar_t kClientIdKey[] = L"ClientId";
-constexpr wchar_t kWindowWidthKey[] = L"Width";
-constexpr wchar_t kWindowHeightKey[] = L"Height";
-constexpr wchar_t kSubscriptionPanelWidthKey[] = L"SubscriptionPanelWidth";
-constexpr wchar_t kSubscriptionCountKey[] = L"Count";
-constexpr wchar_t kChineseLanguageValue[] = L"Chinese";
-constexpr wchar_t kEnglishLanguageValue[] = L"English";
-constexpr UINT kMaxSavedSubscriptions = SubscriptionCatalog::MaxSubscriptions;
-constexpr DWORD kMaximumIniValueLength = 32767;
 
 std::wstring SettingsFilePath() {
     std::vector<wchar_t> executable_path(MAX_PATH);
@@ -48,35 +26,6 @@ std::wstring SettingsFilePath() {
         }
         executable_path.resize(executable_path.size() * 2);
     }
-}
-
-std::wstring ReadIniValue(const std::wstring& path, const wchar_t* section,
-                          const wchar_t* key) {
-    std::vector<wchar_t> value(kMaximumIniValueLength);
-    const DWORD length = GetPrivateProfileStringW(section, key, L"", value.data(),
-                                                  static_cast<DWORD>(value.size()), path.c_str());
-    std::wstring result(value.data(), length);
-    if ((section == kConnectionSection || (section == kSubscriptionsSection && key[0] == L'T')) &&
-        GetPrivateProfileIntW(L"Format", L"HexValues", 0, path.c_str()) == 1) {
-        const auto decoded = DecodeSetting(result);
-        return decoded.value_or(L"");
-    }
-    return result;
-}
-
-int ReadWindowDimension(const std::wstring& path, const wchar_t* key) {
-    const UINT value = GetPrivateProfileIntW(kWindowSection, key, 0, path.c_str());
-    return value > static_cast<UINT>(std::numeric_limits<int>::max())
-               ? 0
-               : static_cast<int>(value);
-}
-
-std::wstring SubscriptionTopicKey(UINT index) {
-    return L"Topic" + std::to_wstring(index);
-}
-
-std::wstring SubscriptionActiveKey(UINT index) {
-    return L"Active" + std::to_wstring(index);
 }
 
 std::wstring GenerateDefaultClientId() {
@@ -99,78 +48,64 @@ std::wstring GenerateDefaultClientId() {
 
 } // namespace
 
-AppSettings LoadAppSettings(AppLanguage fallback_language, const std::wstring& settings_path) {
-    AppSettings settings{fallback_language, {}, {}, {}, 0, 0};
-    const std::wstring path = settings_path.empty() ? SettingsFilePath() : settings_path;
-    if (path.empty()) {
-        return settings;
+AppSettingsLoadResult LoadAppSettings(AppLanguage fallback_language, const std::wstring& settings_path) {
+    AppSettingsLoadResult result{};
+    result.settings.language = fallback_language;
+    result.path = settings_path.empty() ? SettingsFilePath() : settings_path;
+    if (result.path.empty()) {
+        result.error = L"Cannot determine the configuration file path";
+        return result;
     }
-
-    const std::wstring language = ReadIniValue(path, kDisplaySection, kLanguageKey);
-    if (_wcsicmp(language.c_str(), kChineseLanguageValue) == 0) {
-        settings.language = AppLanguage::Chinese;
-    } else if (_wcsicmp(language.c_str(), kEnglishLanguageValue) == 0) {
-        settings.language = AppLanguage::English;
-    }
-    settings.server_uri = ReadIniValue(path, kConnectionSection, kServerUriKey);
-    settings.client_id = ReadIniValue(path, kConnectionSection, kClientIdKey);
-    if (settings.client_id.empty()) {
-        settings.client_id = GenerateDefaultClientId();
-    }
-    settings.window_width = ReadWindowDimension(path, kWindowWidthKey);
-    settings.window_height = ReadWindowDimension(path, kWindowHeightKey);
-    settings.subscription_panel_width = ReadWindowDimension(path, kSubscriptionPanelWidthKey);
-
-    const UINT count = std::min(GetPrivateProfileIntW(kSubscriptionsSection,
-                                                       kSubscriptionCountKey, 0, path.c_str()),
-                                kMaxSavedSubscriptions);
-    SubscriptionCatalog catalog;
-    for (UINT index = 0; index < count; ++index) {
-        std::wstring topic = ReadIniValue(path, kSubscriptionsSection,
-                                          SubscriptionTopicKey(index).c_str());
-        if (!catalog.Add(std::move(topic))) {
-            continue;
+    HANDLE file = CreateFileW(result.path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        const DWORD error = GetLastError();
+        if (error == ERROR_FILE_NOT_FOUND) {
+            result.settings.client_id = GenerateDefaultClientId();
+        } else {
+            result.error = L"Cannot open configuration file (Windows error " + std::to_wstring(error) + L")";
         }
-        const bool active = GetPrivateProfileIntW(kSubscriptionsSection,
-                                                   SubscriptionActiveKey(index).c_str(), 0,
-                                                   path.c_str()) != 0;
-        catalog.SetActive(catalog.Size() - 1, active);
+        return result;
     }
-    settings.subscriptions = catalog.Snapshot();
-    return settings;
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(file, &size) || size.QuadPart <= 0 ||
+        size.QuadPart > static_cast<LONGLONG>(MaxSettingsFileBytes)) {
+        CloseHandle(file);
+        result.error = L"Configuration must be nonempty and no larger than 4 MiB";
+        return result;
+    }
+    std::string bytes(static_cast<std::size_t>(size.QuadPart), '\0');
+    DWORD read = 0;
+    const bool read_ok = ReadFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &read, nullptr) &&
+                         read == bytes.size();
+    CloseHandle(file);
+    if (!read_ok) {
+        result.error = L"Cannot read the complete configuration file";
+        return result;
+    }
+    std::string_view content(bytes);
+    if (content.substr(0, 3) == "\xef\xbb\xbf") content.remove_prefix(3);
+    const auto text = SettingsFromUtf8(content);
+    if (!text) {
+        result.error = L"Configuration must use valid UTF-8 text (optional UTF-8 BOM)";
+        return result;
+    }
+    result.error = ParseSettingsDocument(*text, result.settings);
+    return result;
 }
 
 bool SaveAppSettings(const AppSettings& input, const std::wstring& settings_path) {
-    const AppSettings settings = PersistentSettings(input);
+    const auto text = SerializeSettingsDocument(PersistentSettings(input));
     const std::wstring path = settings_path.empty() ? SettingsFilePath() : settings_path;
-    if (path.empty() || settings.subscriptions.size() > kMaxSavedSubscriptions) return false;
-    // Serialize the entire UTF-16 file before touching the existing settings.
-    // Encode INI-sensitive values without losing quotes or whitespace.
-    const auto valid = [](const std::wstring& value) {
-        return value.find(L'\0') == std::wstring::npos && value.size() * 8 < kMaximumIniValueLength - 1;
-    };
-    if (!valid(settings.server_uri) || !valid(settings.client_id)) return false;
-    std::wstring text = L"\ufeff[Format]\r\nHexValues=1\r\n[Display]\r\nLanguage=";
-    text += settings.language == AppLanguage::Chinese ? kChineseLanguageValue : kEnglishLanguageValue;
-    text += L"\r\n[Connection]\r\nServerUri=" + EncodeSetting(settings.server_uri) + L"\r\nClientId=" + EncodeSetting(settings.client_id);
-    text += L"\r\n[Window]\r\nWidth=" + std::to_wstring(settings.window_width) +
-            L"\r\nHeight=" + std::to_wstring(settings.window_height) +
-            L"\r\nSubscriptionPanelWidth=" + std::to_wstring(settings.subscription_panel_width);
-    text += L"\r\n[Subscriptions]\r\nCount=" + std::to_wstring(settings.subscriptions.size());
-    for (std::size_t i = 0; i < settings.subscriptions.size(); ++i) {
-        const auto& r = settings.subscriptions[i];
-        if (!valid(r.topic)) return false;
-        text += L"\r\nTopic" + std::to_wstring(i) + L"=" + EncodeSetting(r.topic) +
-                L"\r\nActive" + std::to_wstring(i) + (r.active ? L"=1" : L"=0");
-    }
-    text += L"\r\n";
+    if (!text || path.empty()) return false;
+    // Validate and serialize the complete UTF-8 document before replacing the file.
     const std::wstring temporary = path + L"." + std::to_wstring(GetCurrentProcessId()) + L".tmp";
     HANDLE file = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
                               FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) return false;
-    const DWORD bytes = static_cast<DWORD>(text.size() * sizeof(wchar_t));
+    const DWORD bytes = static_cast<DWORD>(text->size());
     DWORD written = 0;
-    bool ok = WriteFile(file, text.data(), bytes, &written, nullptr) && written == bytes;
+    bool ok = WriteFile(file, text->data(), bytes, &written, nullptr) && written == bytes;
     if (ok) ok = FlushFileBuffers(file) != FALSE;
     if (!CloseHandle(file)) ok = false;
     if (ok) ok = MoveFileExW(temporary.c_str(), path.c_str(),

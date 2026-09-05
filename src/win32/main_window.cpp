@@ -1,6 +1,7 @@
 #include "main_window.h"
 #include "../mqtt/mqtt_topic.hpp"
 #include "../settings_autosave.hpp"
+#include "../settings_document.hpp"
 
 #include <commctrl.h>
 #include <windowsx.h>
@@ -178,7 +179,12 @@ struct MainWindow::Impl {
 
     AppSettings CurrentSettings() {
         CaptureNormalWindowSize();
-        return {language, connection.ServerUri(), connection.ClientId(), subscriptions.Snapshot(),
+        // Never persist an incomplete edit that strict startup validation would reject.
+        const auto server_uri = connection.ServerUri();
+        const auto client_id = connection.ClientId();
+        if (ValidSettingsServerUri(server_uri)) settings.server_uri = server_uri;
+        if (ValidSettingsText(client_id)) settings.client_id = client_id;
+        return {language, settings.server_uri, settings.client_id, subscriptions.Snapshot(),
                 settings.window_width, settings.window_height, subscription_panel_width};
     }
 

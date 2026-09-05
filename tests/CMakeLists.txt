@@ -22,6 +22,8 @@ endfunction()
 set(protocol_source ../src/mqtt/mqtt_c/mqtt.c)
 set(transport_source ../src/mqtt/mqtt_c/mqtt_pal.c)
 
+add_mqtt_test(settings_document core settings_document_tests.cpp ../src/settings_document.cpp ../src/mqtt/mqtt_endpoint.cpp)
+
 add_mqtt_test(core core core_module_tests.cpp ../src/mqtt/mqtt_endpoint.cpp ../src/subscription_catalog.cpp)
 
 add_mqtt_test(publish protocol mqtt_publish_tests.c ${protocol_source})
@@ -84,7 +86,7 @@ if(WIN32 AND WIN32MQTT_BROKER_TESTS)
 endif()
 
 if(WIN32)
-    add_mqtt_test(settings core mqtt_settings_tests.cpp ../src/win32/app_settings.cpp ../src/subscription_catalog.cpp)
+    add_mqtt_test(settings core mqtt_settings_tests.cpp ../src/win32/app_settings.cpp ../src/settings_document.cpp ../src/mqtt/mqtt_endpoint.cpp ../src/subscription_catalog.cpp)
     target_compile_definitions(win32mqtt_settings_tests PRIVATE UNICODE _UNICODE NOMINMAX)
 endif()
 
