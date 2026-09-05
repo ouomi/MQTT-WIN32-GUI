@@ -129,6 +129,21 @@ struct MqttSession::Impl {
                    std::string(static_cast<const char*>(published->topic_name), published->topic_name_size),
                    std::string(static_cast<const char*>(published->application_message), published->application_message_size));
     }
+    static void Subscribed(void* state, const mqtt_queued_message* request, std::uint8_t code) {
+        auto* self = static_cast<Impl*>(state);
+        mqtt_response header{};
+        const auto header_size = mqtt_unpack_fixed_header(&header, request->start, request->size);
+        // This is our own encoded single-filter request: packet ID, string length,
+        // topic bytes and requested QoS follow the fixed header.
+        if (header_size <= 0 || static_cast<std::size_t>(header_size) + 5 > request->size) return;
+        const auto* body = request->start + header_size;
+        const std::size_t length = (static_cast<std::size_t>(body[2]) << 8) | body[3];
+        if (length > request->size - static_cast<std::size_t>(header_size) - 5) return;
+        const std::string topic(reinterpret_cast<const char*>(body + 4), length);
+        self->Emit(MqttEventType::Log, self->state, topic + (code == MQTT_SUBACK_FAILURE
+            ? ": subscription rejected by broker"
+            : ": subscription accepted by broker (QoS " + std::to_string(code) + ")"));
+    }
     static std::uint8_t PublishFlags(MqttPublishQos qos) {
         switch (qos) {
         case MqttPublishQos::Qos0: return MQTT_PUBLISH_QOS_0;
@@ -403,6 +418,8 @@ struct MqttSession::Impl {
     void Run() {
         WSADATA data{}; if (WSAStartup(MAKEWORD(2, 2), &data) != 0) { Emit(MqttEventType::StateChanged, MqttConnectionState::Failed, "Winsock initialization failed"); return; }
         mqtt_init_reconnect(&client, nullptr, nullptr, Published); client.publish_response_callback_state = this;
+        client.subscribe_response_callback = Subscribed;
+        client.subscribe_response_callback_state = this;
         while (!stopping || state == MqttConnectionState::Disconnecting) {
             std::deque<Command> pending;
             { std::unique_lock<std::mutex> lock(mutex);

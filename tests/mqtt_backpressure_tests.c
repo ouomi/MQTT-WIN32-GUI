@@ -240,6 +240,98 @@ static void test_empty_publish(void)
     }
 }
 
+static unsigned subscription_results;
+static uint16_t result_ids[4];
+static uint8_t result_codes[4];
+static void subscribed(void *state, const struct mqtt_queued_message *request, uint8_t code)
+{
+    struct fixture *f = state;
+    check(f->client.mutex == 1, "SUBACK callback holds mutex");
+    check(request->control_type == MQTT_CONTROL_SUBSCRIBE, "callback identifies SUBSCRIBE");
+    check(subscription_results < 4, "bounded result count");
+    result_ids[subscription_results] = request->packet_id;
+    result_codes[subscription_results++] = code;
+}
+
+static void test_subscription_results(void)
+{
+    struct fixture f;
+    uint16_t first, second;
+    uint8_t packets[] = {0x90, 3, 0, 0, 0x80, 0x90, 3, 0, 0, 0,
+                         0x30, 3, 0, 1, 'a'};
+    setup(&f);
+    check(f.client.subscribe_response_callback == NULL &&
+          f.client.subscribe_response_callback_state == NULL, "optional callback initialized");
+    f.client.subscribe_response_callback = subscribed;
+    f.client.subscribe_response_callback_state = &f;
+    subscription_results = 0;
+    check(mqtt_subscribe(&f.client, "first/#", 0) == MQTT_OK, "first subscription queued");
+    first = mqtt_mq_get(&f.client.mq, 0)->packet_id;
+    check(mqtt_subscribe(&f.client, "second/+", 0) == MQTT_OK, "second subscription queued");
+    second = mqtt_mq_get(&f.client.mq, 1)->packet_id;
+    send_bytes(&f, sizeof(output));
+    /* Out-of-order results must still identify the original request. */
+    packets[2] = (uint8_t)(second >> 8); packets[3] = (uint8_t)second;
+    packets[7] = (uint8_t)(first >> 8); packets[8] = (uint8_t)first;
+    input = packets; input_size = sizeof(packets);
+    check(mqtt_sync(&f.client) == MQTT_OK && f.client.error == MQTT_OK,
+          "broker rejection leaves connection healthy");
+    check(subscription_results == 2 && result_ids[0] == second && result_codes[0] == 0x80 &&
+          result_ids[1] == first && result_codes[1] == 0, "results correlated to requests");
+    check(received == 1, "PUBLISH after rejected SUBACK is delivered");
+    mqtt_test_time = 31;
+    output_size = 0;
+    send_bytes(&f, sizeof(output));
+    check(output_size == 0, "completed subscriptions are not retransmitted");
+    check(mqtt_subscribe(&f.client, "retry", 0) == MQTT_OK, "can subscribe after rejection");
+    first = mqtt_mq_get(&f.client.mq, 0)->packet_id;
+    send_bytes(&f, sizeof(output));
+    f.client.subscribe_response_callback = NULL;
+    packets[2] = (uint8_t)(first >> 8); packets[3] = (uint8_t)first;
+    input = packets; input_size = 5;
+    check(mqtt_sync(&f.client) == MQTT_OK && f.client.error == MQTT_OK,
+          "rejection without optional callback is nonfatal");
+    first = first == 65535 ? 1 : (uint16_t)(first + 1);
+    packets[2] = (uint8_t)(first >> 8); packets[3] = (uint8_t)first;
+    input = packets; input_size = 5;
+    check(win32mqtt_recv(&f.client) == MQTT_ERROR_ACK_OF_UNKNOWN,
+          "unknown SUBACK remains a protocol error");
+}
+
+static void test_suback_validation(void)
+{
+    unsigned code;
+    for (code = 0; code <= 255; ++code) {
+        struct mqtt_response response;
+        uint8_t packet[] = {0x90, 3, 0, 1, (uint8_t)code};
+        ssize_t result = mqtt_unpack_response(&response, packet, sizeof(packet));
+        check((code <= 2 || code == 128) ? result == 5 : result == MQTT_ERROR_MALFORMED_RESPONSE,
+              "only protocol-defined SUBACK return codes accepted");
+    }
+    {
+        struct fixture f;
+        uint8_t packet[] = {0x90, 4, 0, 0, 0, 0};
+        uint16_t id;
+        setup(&f);
+        check(mqtt_subscribe(&f.client, "a", 0) == MQTT_OK, "queue single-filter request");
+        id = mqtt_mq_get(&f.client.mq, 0)->packet_id;
+        send_bytes(&f, sizeof(output));
+        packet[2] = (uint8_t)(id >> 8); packet[3] = (uint8_t)id;
+        input = packet; input_size = sizeof(packet);
+        check(win32mqtt_recv(&f.client) == MQTT_ERROR_MALFORMED_RESPONSE,
+              "excess return codes are a protocol error");
+    }
+    {
+        struct mqtt_response response;
+        const uint8_t zero_id[] = {0x90, 3, 0, 0, 0};
+        const uint8_t no_code[] = {0x90, 2, 0, 1};
+        check(mqtt_unpack_response(&response, zero_id, sizeof(zero_id)) == MQTT_ERROR_MALFORMED_RESPONSE,
+              "zero SUBACK packet ID rejected");
+        check(mqtt_unpack_response(&response, no_code, sizeof(no_code)) == MQTT_ERROR_MALFORMED_RESPONSE,
+              "missing SUBACK return code rejected");
+    }
+}
+
 int main(void)
 {
     test_resume(0);
@@ -249,6 +341,8 @@ int main(void)
     test_receive();
     test_receive_budget();
     test_empty_publish();
+    test_subscription_results();
+    test_suback_validation();
     puts("MQTT backpressure tests passed");
     return EXIT_SUCCESS;
 }

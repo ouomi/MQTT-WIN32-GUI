@@ -158,6 +158,8 @@ enum MQTTErrors mqtt_init(struct mqtt_client *client,
     client->pid_lfsr = 0;
     client->send_offset = 0;
 
+    client->subscribe_response_callback = NULL;
+    client->subscribe_response_callback_state = NULL;
     client->inspector_callback = NULL;
     client->reconnect_callback = NULL;
     client->reconnect_state = NULL;
@@ -191,6 +193,8 @@ void mqtt_init_reconnect(struct mqtt_client *client,
     client->pid_lfsr = 0;
     client->send_offset = 0;
 
+    client->subscribe_response_callback = NULL;
+    client->subscribe_response_callback_state = NULL;
     client->inspector_callback = NULL;
     client->reconnect_callback = reconnect;
     client->reconnect_state = reconnect_state;
@@ -883,11 +887,15 @@ ssize_t win32mqtt_recv(struct mqtt_client *client)
                 msg->state = MQTT_QUEUED_COMPLETE;
                 /* update response time */
                 client->typical_response_time = 0.875f * (client->typical_response_time) + 0.125f * (float) (MQTT_PAL_TIME() - msg->time_sent);
-                /* check that subscription was successful (not currently only one subscribe at a time) */
-                if (response.decoded.suback.return_codes[0] == MQTT_SUBACK_FAILURE) {
-                    client->error = MQTT_ERROR_SUBSCRIBE_FAILED;
-                    mqtt_recv_ret = MQTT_ERROR_SUBSCRIBE_FAILED;
+                /* mqtt_subscribe queues exactly one filter per request. */
+                if (response.decoded.suback.num_return_codes != 1) {
+                    client->error = MQTT_ERROR_MALFORMED_RESPONSE;
+                    mqtt_recv_ret = MQTT_ERROR_MALFORMED_RESPONSE;
                     break;
+                }
+                if (client->subscribe_response_callback != NULL) {
+                    client->subscribe_response_callback(client->subscribe_response_callback_state,
+                        msg, response.decoded.suback.return_codes[0]);
                 }
                 break;
             case MQTT_CONTROL_UNSUBACK:
@@ -1513,7 +1521,13 @@ ssize_t mqtt_unpack_suback_response (struct mqtt_response *mqtt_response, const 
     /* unpack return codes */
     mqtt_response->decoded.suback.num_return_codes = (size_t) remaining_length;
     mqtt_response->decoded.suback.return_codes = buf;
-    buf += remaining_length;
+    if (mqtt_response->decoded.suback.packet_id == 0) return MQTT_ERROR_MALFORMED_RESPONSE;
+    while (remaining_length-- > 0) {
+        if (*buf > MQTT_SUBACK_SUCCESS_MAX_QOS_2 && *buf != MQTT_SUBACK_FAILURE) {
+            return MQTT_ERROR_MALFORMED_RESPONSE;
+        }
+        ++buf;
+    }
 
     return buf - start;
 }

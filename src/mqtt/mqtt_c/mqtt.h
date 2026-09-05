@@ -1175,6 +1175,16 @@ struct mqtt_client {
      */
     void* publish_response_callback_state;
 
+    /** Optional SUBACK notification, including broker rejection (0x80).
+     * The request identifies the original single-filter SUBSCRIBE. Both pointers
+     * are borrowed for this call only. Runs with the client mutex held: callbacks
+     * must not call MQTT operations on this client. Initialized to NULL by init;
+     * retained by mqtt_reinit. Rejection is an operation result, not a client error.
+     */
+    void (*subscribe_response_callback)(void* state,
+        const struct mqtt_queued_message* request, uint8_t return_code);
+    void* subscribe_response_callback_state;
+
     /**
      * @brief A user-specified callback, triggered on each \ref mqtt_sync, allowing
      *        the user to perform state inspections (and custom socket error detection)
