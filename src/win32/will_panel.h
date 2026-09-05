@@ -17,11 +17,8 @@ struct LastWillSettings {
 
 class WillPanel {
 public:
-    static constexpr int kStatusButtonWidth = 150;
-    static constexpr int kStatusButtonGap = 4;
-
     void Create(HWND parent, AppLanguage language, std::function<void()> test);
-    void Layout(const RECT& status_bounds) const;
+    void Layout(const RECT& bounds) const;
     void UpdateText(AppLanguage language, MqttConnectionState state) const;
     bool HandleCommand(WORD id, WORD notification);
     void ShowTestCompleted() const;

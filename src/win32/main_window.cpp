@@ -260,18 +260,7 @@ struct MainWindow::Impl {
             if (!splitter_only) connection.Layout(InsetPanel(panels.connection));
             subscriptions.Layout(InsetPanel(panels.subscriptions));
             messages.Layout(InsetPanel(panels.messages));
-            publisher.Layout(InsetPanel(panels.publisher));
-            if (!splitter_only) {
-                RECT status_bounds{};
-                GetWindowRect(status, &status_bounds);
-                MapWindowPoints(HWND_DESKTOP, window, reinterpret_cast<LPPOINT>(&status_bounds), 2);
-                const int status_text_right =
-                    status_bounds.right - GetSystemMetrics(SM_CXVSCROLL) -
-                    WillPanel::kStatusButtonGap - WillPanel::kStatusButtonWidth -
-                    kControlGap;
-                SendMessageW(status, SB_SETPARTS, 1, reinterpret_cast<LPARAM>(&status_text_right));
-                will.Layout(status_bounds);
-            }
+            will.Layout(publisher.Layout(InsetPanel(panels.publisher)));
         } // Commit all changed control positions before repainting.
         // Child invalidation is handled by their geometry changes. Allow paint
         // requests to coalesce instead of erasing all controls on every move.

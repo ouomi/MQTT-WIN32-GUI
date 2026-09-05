@@ -24,7 +24,8 @@ struct PublishPanelRequest {
 class PublishPanel {
 public:
     void Create(HWND parent, AppLanguage language);
-    void Layout(const RECT& bounds) const;
+    // Lay out publishing controls and return the Last Will button bounds.
+    RECT Layout(const RECT& bounds) const;
     void UpdateText(AppLanguage language) const;
     void SetConnected(bool connected) const;
     void SetTopics(const std::vector<std::wstring>& topics) const;

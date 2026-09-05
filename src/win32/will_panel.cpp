@@ -54,11 +54,8 @@ void WillPanel::Create(HWND parent, AppLanguage language, std::function<void()> 
 }
 
 void WillPanel::Layout(const RECT& bounds) const {
-    const int right = bounds.right - GetSystemMetrics(SM_CXVSCROLL) - kStatusButtonGap;
-    PositionControl(toggle_, right - kStatusButtonWidth, bounds.top,
-                    kStatusButtonWidth, bounds.bottom - bounds.top);
-    SetWindowPos(toggle_, HWND_TOP, 0, 0, 0, 0,
-                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    PositionControl(toggle_, bounds.left, bounds.top,
+                    bounds.right - bounds.left, bounds.bottom - bounds.top);
 }
 
 void WillPanel::LayoutWindow() const {

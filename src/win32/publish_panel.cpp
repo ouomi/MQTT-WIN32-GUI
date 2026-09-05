@@ -1,5 +1,6 @@
 #include "publish_panel.h"
 
+#include <algorithm>
 #include <string>
 
 #include "control_helpers.h"
@@ -10,6 +11,7 @@ namespace win32mqtt {
 namespace {
 
 constexpr int kButtonWidth = 108;
+constexpr int kLastWillButtonWidth = 150;
 constexpr int kControlGap = 8;
 constexpr int kComboOffset = 90;
 constexpr int kLabelHeight = 18;
@@ -49,7 +51,7 @@ void PublishPanel::SetConnected(bool connected) const {
     EnableWindow(publish_button_, connected ? TRUE : FALSE);
 }
 
-void PublishPanel::Layout(const RECT& bounds) const {
+RECT PublishPanel::Layout(const RECT& bounds) const {
     const int width = bounds.right - bounds.left;
     const int payload_y = bounds.top;
     const int target_y = payload_y + 69;
@@ -63,9 +65,13 @@ void PublishPanel::Layout(const RECT& bounds) const {
                     kPublishTopicDropDownHeight);
     PositionControl(publish_button_, bounds.right - kButtonWidth, target_y,
                     kButtonWidth, kRowHeight);
-    PositionControl(qos_label_, bounds.left, qos_y + 4, kComboOffset - 4, kLabelHeight);
-    PositionControl(qos_, bounds.left + kComboOffset, qos_y,
+    // Keep the button clear of QoS even at the splitter's minimum panel width.
+    const int qos_offset = std::min(kComboOffset,
+        width - kLastWillButtonWidth - kControlGap - kPublishQosWidth);
+    PositionControl(qos_label_, bounds.left, qos_y + 4, qos_offset - 4, kLabelHeight);
+    PositionControl(qos_, bounds.left + qos_offset, qos_y,
                     kPublishQosWidth, kPublishQosDropDownHeight);
+    return {bounds.right - kLastWillButtonWidth, qos_y, bounds.right, qos_y + kRowHeight};
 }
 
 void PublishPanel::SetTopics(const std::vector<std::wstring>& topics) const {

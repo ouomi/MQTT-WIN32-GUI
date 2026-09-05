@@ -13,7 +13,7 @@ A small Windows MQTT debugging tool built with native Win32 controls. Connect to
 需要 **Windows 8 或更新版本**。打开发布目录中的 `mqttwin32.exe`，无需安装。
 
 1. 输入 Broker 地址，例如 `mqtt://localhost:1883`；TLS 版也支持 `mqtts://broker.example:8883`。
-2. 设置客户端 ID；如果需要遗嘱消息，点击状态栏右侧的“遗嘱消息…”按钮，在独立窗口中启用并填写主题、内容，然后连接。连接期间遗嘱配置不可修改；关闭窗口会保留本次运行中的配置。
+2. 设置客户端 ID；如果需要遗嘱消息，点击发布区 QoS 同一行右侧的“遗嘱消息…”按钮，在独立窗口中启用并填写主题、内容，然后连接。连接期间遗嘱配置不可修改；关闭窗口会保留本次运行中的配置。
 3. 点击连接，添加并勾选需要订阅的主题过滤器，例如 `sensors/#`。
 4. 在发布区独立输入主题，例如 `sensors/temperature`，选择 QoS 并发送。
 
@@ -124,7 +124,7 @@ dist/<release-preset>/         可直接打包分发的完整目录
 Requires **Windows 8 or later**. Open `mqttwin32.exe` from the distribution directory; no installer is needed.
 
 1. Enter a broker URI, such as `mqtt://localhost:1883`. TLS builds also accept `mqtts://broker.example:8883`.
-2. Set the client ID. To configure a Last Will, click “Last Will…” at the right of the status bar, enable it and enter the topic and message in the separate window before connecting. Settings are locked while connected and kept for the current run when the window is closed.
+2. Set the client ID. To configure a Last Will, click “Last Will…” on the right of the QoS row in the publish area, enable it and enter the topic and message in the separate window before connecting. Settings are locked while connected and kept for the current run when the window is closed.
 3. Connect, add subscription filters such as `sensors/#`, and tick their checkboxes.
 4. Enter a separate publish topic such as `sensors/temperature`, choose a QoS, and send.
 
