@@ -55,3 +55,42 @@ if(TARGET OpenSSL::SSL)
 else()
     message(STATUS "BIO tests disabled: OpenSSL was not found or TLS is disabled for this Windows build.")
 endif()
+
+if(NOT WIN32)
+    add_mqtt_test(session connection mqtt_session_tests.cpp ../src/mqtt/mqtt_session.cpp
+        ../src/mqtt/mqtt_endpoint.cpp ${protocol_source})
+    target_compile_definitions(win32mqtt_session_tests PRIVATE
+        MQTT_CUSTOM_PAL_HEADER="mqtt_session_pal.h" WIN32MQTT_ENABLE_TLS=0)
+    target_link_libraries(win32mqtt_session_tests PRIVATE Threads::Threads)
+    set_tests_properties(win32mqtt_session_tests PROPERTIES TIMEOUT 30)
+endif()
+
+option(WIN32MQTT_BROKER_TESTS "Build opt-in real Windows/Broker integration runner" OFF)
+if(WIN32 AND WIN32MQTT_BROKER_TESTS)
+    add_executable(win32mqtt_live_tests mqtt_live_tests.cpp ../src/mqtt/mqtt_session.cpp
+        ../src/mqtt/mqtt_endpoint.cpp ${protocol_source} ${transport_source})
+    target_compile_features(win32mqtt_live_tests PRIVATE cxx_std_17 c_std_99)
+    target_include_directories(win32mqtt_live_tests PRIVATE ../src ../src/mqtt/mqtt_c)
+    target_compile_definitions(win32mqtt_live_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX
+        _WIN32_WINNT=0x0602 WIN32MQTT_ENABLE_TLS=$<BOOL:${WIN32MQTT_ENABLE_TLS}>)
+    if(MINGW)
+        target_compile_definitions(win32mqtt_live_tests PRIVATE WIN32MQTT_MINGW=1)
+    endif()
+    target_link_libraries(win32mqtt_live_tests PRIVATE ws2_32)
+    if(WIN32MQTT_ENABLE_TLS)
+        target_compile_definitions(win32mqtt_live_tests PRIVATE MQTT_USE_BIO=1)
+        target_link_libraries(win32mqtt_live_tests PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+    endif()
+endif()
+
+if(WIN32)
+    add_mqtt_test(settings core mqtt_settings_tests.cpp ../src/win32/app_settings.cpp ../src/subscription_catalog.cpp)
+    target_compile_definitions(win32mqtt_settings_tests PRIVATE UNICODE _UNICODE NOMINMAX)
+endif()
+
+if(TARGET OpenSSL::SSL)
+    add_mqtt_test(tls transport mqtt_tls_tests.c ${protocol_source} ${transport_source})
+    target_compile_definitions(win32mqtt_tls_tests PRIVATE MQTT_CUSTOM_PAL_HEADER="mqtt_test_pal.h"
+        WIN32MQTT_TEST_TRACK_LOCKS=1 MQTT_USE_BIO=1)
+    target_link_libraries(win32mqtt_tls_tests PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+endif()

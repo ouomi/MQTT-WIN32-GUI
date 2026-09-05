@@ -117,7 +117,7 @@ std::wstring Utf8ToWide(std::string_view value) {
     const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
                                            static_cast<int>(value.size()), nullptr, 0);
     if (length == 0) {
-        return L"<non-UTF-8 data>";
+        return L"<binary; see HEX> " + MqttMessageStore::Hex(std::string(value.substr(0, 128)));
     }
     std::wstring result(static_cast<std::size_t>(length), L'\0');
     MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
@@ -284,12 +284,9 @@ struct MainWindow::Impl {
     }
 
     void ApplySubscriptionChanges(SubscriptionPanelChanges changes) {
-        for (const std::wstring& topic : changes.subscribe_topics) {
-            ReportAdmission(mqtt->Subscribe(WideToUtf8(topic)));
-        }
-        for (const std::wstring& topic : changes.unsubscribe_topics) {
-            ReportAdmission(mqtt->Unsubscribe(WideToUtf8(topic)));
-        }
+        std::vector<std::string> desired;
+        for (const auto& topic : subscriptions.ActiveTopics()) desired.push_back(WideToUtf8(topic));
+        ReportAdmission(mqtt->SetSubscriptions(std::move(desired)));
         for (const std::wstring& message : changes.messages) {
             messages.Append(message);
         }
@@ -356,7 +353,24 @@ struct MainWindow::Impl {
     }
 
     void PollMqttEvents() {
+        // Query durable state independently of the lossy message/log mailbox.
+        const auto statuses = mqtt->Subscriptions();
+        for (const auto& record : subscriptions.Snapshot()) {
+            const auto topic = WideToUtf8(record.topic);
+            const auto found = std::find_if(statuses.begin(), statuses.end(), [&](const auto& r) { return r.topic == topic; });
+            std::wstring text = L"未订阅 / Inactive";
+            bool absent = true;
+            if (found != statuses.end()) {
+                absent = !found->actual && !found->pending && !found->desired;
+                text = !found->error.empty() ? Utf8ToWide(found->error) :
+                    found->pending ? L"等待确认 / Pending" : found->actual ? L"已确认 / Subscribed" :
+                    found->desired ? L"等待同步 / Waiting" : L"未订阅 / Inactive";
+                text += L" [" + std::to_wstring(found->generation) + L":" + std::to_wstring(found->operation) + L"]";
+            }
+            subscriptions.UpdateStatus(record.topic, text, absent);
+        }
         auto batch = mqtt_events.Take();
+        for (auto& result : mqtt->TakePublishResults()) batch.events.push_back(std::move(result));
         messages.BeginBatch();
         if (batch.dropped) messages.Append(std::wstring(Text(language, UiText::MqttEventsDropped)) +
                                           std::to_wstring(batch.dropped));
@@ -376,9 +390,7 @@ struct MainWindow::Impl {
                 break;
             case MqttConnectionState::Connected:
                 messages.Append(std::wstring(Text(language, UiText::ConnectedStatus)));
-                for (const std::wstring& topic : subscriptions.ActiveTopics()) {
-                    ReportAdmission(mqtt->Subscribe(WideToUtf8(topic)));
-                }
+                ApplySubscriptionChanges({});
                 break;
             case MqttConnectionState::Failed:
                 messages.Append(L"[MQTT] " + Utf8ToWide(event->detail));
@@ -391,16 +403,17 @@ struct MainWindow::Impl {
                 break;
             }
         } else if (event->type == MqttEventType::MessageReceived) {
-            messages.Append(L"[" + Utf8ToWide(event->topic) + L"] " +
-                            Utf8ToWide(event->payload));
+            messages.Receive(*event, Utf8ToWide(event->topic), Utf8ToWide(event->payload));
         } else if (event->type == MqttEventType::PublishQueued) {
-            messages.Append(std::wstring(Text(language, UiText::PublishQueued)) +
+            messages.Append(L"[" + std::to_wstring(event->generation) + L":" + std::to_wstring(event->operation) + L"] " +
+                            std::wstring(Text(language, UiText::PublishQueued)) +
                             L"QoS " +
                             std::to_wstring(static_cast<int>(event->publish_qos)) +
                             L" -> " + Utf8ToWide(event->topic) + L": " +
                             Utf8ToWide(event->payload));
         } else if (event->type == MqttEventType::PublishRejected) {
-            messages.Append(std::wstring(Text(language, UiText::PublishRejected)) +
+            messages.Append(L"[" + std::to_wstring(event->generation) + L":" + std::to_wstring(event->operation) + L"] " +
+                            std::wstring(Text(language, UiText::PublishRejected)) +
                             Utf8ToWide(event->detail));
         } else {
             messages.Append(L"[MQTT] " + Utf8ToWide(event->detail));
@@ -611,9 +624,14 @@ LRESULT CALLBACK MainWindow::WindowProc(HWND window, UINT message, WPARAM wparam
     }
     case WM_DESTROY:
         app.CaptureNormalWindowSize();
-        SaveAppSettings({app.language, app.connection.ServerUri(), app.connection.ClientId(),
+        if (!SaveAppSettings({app.language, app.connection.ServerUri(), app.connection.ClientId(),
                          app.subscriptions.Snapshot(), app.settings.window_width,
-                         app.settings.window_height});
+                         app.settings.window_height})) {
+            MessageBoxW(nullptr,
+                app.language == AppLanguage::Chinese ? L"配置保存失败，原配置已保留。请检查程序目录的写入权限和磁盘空间。" :
+                    L"Settings could not be saved. Previous settings were preserved. Check directory permissions and disk space.",
+                L"WIN32 MQTT", MB_OK | MB_ICONERROR);
+        }
         KillTimer(window, Impl::MqttEventTimer);
         app.mqtt_events.Close();
         if (app.mqtt) {

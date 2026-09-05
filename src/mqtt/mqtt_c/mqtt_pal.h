@@ -80,9 +80,9 @@ typedef SSIZE_T ssize_t;
 #endif
 #define MQTT_PAL_HTONS(s) htons(s)
 #define MQTT_PAL_NTOHS(s) ntohs(s)
-#define MQTT_PAL_TIME() time(NULL)
+#define MQTT_PAL_TIME() (GetTickCount64() / 1000)
 
-typedef time_t mqtt_pal_time_t;
+typedef uint64_t mqtt_pal_time_t;
 typedef CRITICAL_SECTION mqtt_pal_mutex_t;
 
 #define MQTT_PAL_MUTEX_INIT(mtx_ptr) InitializeCriticalSection(mtx_ptr)

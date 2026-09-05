@@ -20,6 +20,7 @@ void MessagePanel::Create(HWND parent, AppLanguage language) {
     output_ = AddEdit(parent, IDC_MESSAGES, L"",
                       ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_HSCROLL | WS_VSCROLL);
     SendMessageW(output_, EM_SETLIMITTEXT, MessageLog::MaxCharacters, 0);
+    hex_button_ = AddButton(parent, IDC_RAW_MESSAGES, L"Text / HEX");
     clear_button_ = AddButton(parent, IDC_CLEAR_MESSAGES, L"");
     UpdateText(language);
 }
@@ -37,17 +38,22 @@ void MessagePanel::Layout(const RECT& bounds) const {
     const int output_bottom = bounds.bottom - kPanelContentMargin;
 
     PositionControl(title_, content_left, content_top,
-                    content_width - kButtonWidth - kControlGap, kHeadingHeight);
+                    content_width - 2 * (kButtonWidth + kControlGap), kHeadingHeight);
+    PositionControl(hex_button_, bounds.right - kPanelContentMargin - 2 * kButtonWidth - kControlGap,
+                    content_top, kButtonWidth, kRowHeight);
     PositionControl(clear_button_, bounds.right - kPanelContentMargin - kButtonWidth,
                     content_top, kButtonWidth, kRowHeight);
     PositionControl(output_, content_left, output_y, content_width, output_bottom - output_y);
 }
 
 bool MessagePanel::HandleCommand(WORD id, WORD notification) const {
+    if (id == IDC_RAW_MESSAGES && notification == BN_CLICKED) {
+        hex_ = !hex_; dirty_ = true; Refresh(); return true;
+    }
     if (id != IDC_CLEAR_MESSAGES || notification != BN_CLICKED) {
         return false;
     }
-    log_.Clear();
+    log_.Clear(); raw_.Clear();
     dirty_ = true;
     Refresh();
     return true;
@@ -65,7 +71,19 @@ void MessagePanel::EndBatch() const {
 }
 
 void MessagePanel::Refresh() const {
-    const auto text = log_.Text();
+    auto text = log_.Text();
+    if (hex_) {
+        text.clear();
+        for (const auto& event : raw_.Records()) {
+            text += L"[generation=" + std::to_wstring(event.generation) + L" monotonic-ms=" +
+                std::to_wstring(event.received_ms) + L" QoS=" + std::to_wstring(static_cast<int>(event.publish_qos)) +
+                L" retain=" + std::to_wstring(event.retain) + L" dup=" + std::to_wstring(event.dup) +
+                L" packet=" + std::to_wstring(event.packet_id) + L" bytes=" + std::to_wstring(event.payload.size()) +
+                L"]\r\nTopic HEX: " + MqttMessageStore::Hex(event.topic) +
+                L"\r\nPayload HEX: " + MqttMessageStore::Hex(event.payload) + L"\r\n";
+        }
+    }
+    SendMessageW(output_, EM_SETLIMITTEXT, 4 * MqttMessageStore::MaxBytes, 0);
     SendMessageW(output_, WM_SETREDRAW, FALSE, 0);
     SetWindowTextW(output_, text.c_str());
     SendMessageW(output_, EM_SETSEL, static_cast<WPARAM>(-1), static_cast<LPARAM>(-1));
@@ -76,3 +94,12 @@ void MessagePanel::Refresh() const {
 }
 
 } // namespace win32mqtt
+
+namespace win32mqtt {
+void MessagePanel::Receive(const MqttEvent& event, const std::wstring& topic, const std::wstring& text) const {
+    raw_.Push(event);
+    Append(L"[" + topic + L"] QoS=" + std::to_wstring(static_cast<int>(event.publish_qos)) +
+        L" retain=" + std::to_wstring(event.retain) + L" dup=" + std::to_wstring(event.dup) +
+        L" bytes=" + std::to_wstring(event.payload.size()) + L" " + text);
+}
+}

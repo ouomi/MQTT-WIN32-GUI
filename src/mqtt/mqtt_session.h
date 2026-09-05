@@ -6,6 +6,8 @@
 #include <string>
 
 #include "mqtt_endpoint.hpp"
+#include "mqtt_subscriptions.hpp"
+#include "mqtt_session_backend.hpp"
 
 namespace win32mqtt {
 
@@ -27,13 +29,19 @@ struct MqttEvent {
     std::string topic;
     std::string payload;
     MqttPublishQos publish_qos;
+    bool retain = false;
+    bool dup = false;
+    std::uint16_t packet_id = 0;
+    std::uint64_t generation = 0;
+    std::uint64_t operation = 0;
+    std::uint64_t received_ms = 0;
 };
 
 class MqttSession {
 public:
     using EventHandler = std::function<void(MqttEvent)>;
 
-    explicit MqttSession(EventHandler event_handler);
+    explicit MqttSession(EventHandler event_handler, std::shared_ptr<MqttSessionBackend> backend = {});
     ~MqttSession();
 
     MqttSession(const MqttSession&) = delete;
@@ -46,6 +54,12 @@ public:
     MqttAdmission Unsubscribe(std::string topic);
     MqttAdmission Publish(std::string topic, std::string payload, MqttPublishQos qos);
     void Stop();
+    // Desired state survives disconnects and is reconciled after each clean connection.
+    MqttAdmission SetSubscriptions(std::vector<std::string> topics);
+    std::vector<MqttSubscriptionStatus> Subscriptions() const;
+    // Reliable admission outcomes, retained until taken (maximum 256 outstanding).
+    // These are protocol queue results, not broker acknowledgements.
+    std::vector<MqttEvent> TakePublishResults();
 
 private:
     struct Impl;

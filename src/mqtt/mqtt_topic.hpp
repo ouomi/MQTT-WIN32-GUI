@@ -10,7 +10,7 @@ namespace topic_detail {
 // MQTT strings are well-formed UTF-8, at most 65535 encoded bytes, without U+0000.
 // Accept both Windows UTF-16 UI strings and UTF-8 session strings without lossy conversion.
 template<class Character>
-bool Valid(std::basic_string_view<Character> text, bool filter) {
+bool Valid(std::basic_string_view<Character> text, bool filter, std::size_t max_bytes = 65535) {
     if (text.empty()) return false;
     std::size_t bytes = 0;
     for (std::size_t i = 0; i < text.size();) {
@@ -40,7 +40,7 @@ bool Valid(std::basic_string_view<Character> text, bool filter) {
         }
         if (code == 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return false;
         bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
-        if (bytes > 65535) return false;
+        if (bytes > max_bytes) return false;
         if (code == '+' || code == '#') {
             if (!filter || (position != 0 && text[position - 1] != '/')) return false;
             if (code == '#' && i != text.size()) return false;

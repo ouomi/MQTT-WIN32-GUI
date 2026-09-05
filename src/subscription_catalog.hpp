@@ -9,6 +9,7 @@ namespace win32mqtt {
 struct SubscriptionRecord {
     std::wstring topic;
     bool active{false};
+    bool removing{false};
 };
 
 class SubscriptionCatalog {
@@ -18,6 +19,8 @@ public:
     std::size_t Find(const std::wstring& topic) const noexcept;
     bool Add(std::wstring topic);
     bool Remove(std::size_t index);
+    bool MarkRemoving(std::size_t index);
+    static constexpr std::size_t MaxSubscriptions = 256;
     bool SetActive(std::size_t index, bool active);
     void Replace(std::vector<SubscriptionRecord> records);
     std::vector<SubscriptionRecord> Snapshot() const;

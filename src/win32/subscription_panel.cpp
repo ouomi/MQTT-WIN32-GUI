@@ -41,6 +41,9 @@ void SubscriptionPanel::Create(HWND parent, AppLanguage language,
     topic_column.pszText = const_cast<LPWSTR>(Text(language, UiText::Topic).data());
     topic_column.cx = 340;
     ListView_InsertColumn(list_, 0, &topic_column);
+    topic_column.pszText = const_cast<LPWSTR>(L"Broker / 同步状态");
+    topic_column.cx = 280;
+    ListView_InsertColumn(list_, 1, &topic_column);
 
     restoring_ = true;
     for (std::size_t index = 0; index < catalog_.Size(); ++index) {
@@ -112,6 +115,13 @@ SubscriptionPanelChanges SubscriptionPanel::HandleNotification(AppLanguage langu
             return changes;
         }
 
+        const auto* existing = RecordAt(changed.iItem);
+        if (existing && existing->removing) {
+            restoring_ = true;
+            ListView_SetCheckState(list_, changed.iItem, FALSE);
+            restoring_ = false;
+            return changes;
+        }
         const bool active = ((changed.uNewState & LVIS_STATEIMAGEMASK) >> 12) == 2;
         if (!catalog_.SetActive(static_cast<std::size_t>(changed.iItem), active)) {
             return changes;
@@ -162,6 +172,12 @@ std::vector<SubscriptionRecord> SubscriptionPanel::Snapshot() const {
 
 void SubscriptionPanel::Add(HWND owner, AppLanguage language,
                             SubscriptionPanelChanges& changes) {
+    if (catalog_.Size() >= SubscriptionCatalog::MaxSubscriptions) {
+        changes.messages.push_back(language == AppLanguage::Chinese ?
+            L"订阅目录已达到 256 条上限，请先删除不需要的记录。" :
+            L"The subscription catalog is limited to 256 records. Remove unused records first.");
+        return;
+    }
     const std::wstring topic = ControlText(topic_input_);
     if (topic.empty()) {
         ShowClassicMessageBox(owner, Text(language, UiText::EnterTopicFirst).data(),
@@ -232,8 +248,12 @@ void SubscriptionPanel::RemoveSelected(AppLanguage language,
         }
         changes.messages.push_back(
             std::wstring(Text(language, UiText::RemovedSubscription)) + topic);
-        ListView_DeleteItem(list_, index);
-        catalog_.Remove(static_cast<std::size_t>(index));
+        catalog_.MarkRemoving(static_cast<std::size_t>(index));
+        restoring_ = true;
+        ListView_SetCheckState(list_, index, FALSE);
+        restoring_ = false;
+        changes.active_topics_changed = true;
+        ListView_SetItemText(list_, index, 1, const_cast<LPWSTR>(L"等待退订 / Removing"));
     }
     ListView_SetColumnWidth(list_, 0, LVSCW_AUTOSIZE_USEHEADER);
 }
@@ -285,3 +305,18 @@ const SubscriptionRecord* SubscriptionPanel::RecordAt(int index) const {
 }
 
 } // namespace win32mqtt
+
+namespace win32mqtt {
+void SubscriptionPanel::UpdateStatus(const std::wstring& topic, const std::wstring& status, bool absent) {
+    const auto index = catalog_.Find(topic);
+    if (index == SubscriptionCatalog::npos) return;
+    restoring_ = true;
+    if (catalog_.At(index)->removing && absent) {
+        ListView_DeleteItem(list_, static_cast<int>(index));
+        catalog_.Remove(index);
+    } else {
+        ListView_SetItemText(list_, static_cast<int>(index), 1, const_cast<LPWSTR>(status.c_str()));
+    }
+    restoring_ = false;
+}
+}

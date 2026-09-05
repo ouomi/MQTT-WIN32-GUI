@@ -56,7 +56,7 @@ static void published(void **state, struct mqtt_response_publish *message)
 
 struct fixture {
     struct mqtt_client client;
-    union { struct mqtt_queued_message alignment; uint8_t bytes[2048]; } send;
+    union { struct mqtt_queued_message alignment; uint8_t bytes[8192]; } send;
     uint8_t recv[2048];
 };
 static void setup(struct fixture *f)
@@ -108,7 +108,7 @@ static void test_resume(size_t first_write)
     mqtt_test_time = 31; /* The earlier QoS 1 message is now overdue. */
     before_reads = reads;
     check(mqtt_sync(&f.client) == MQTT_OK, "sync yields on backpressure");
-    check(reads == before_reads && second->sending, "pending write precedes reads and timeout retries");
+    check(reads > before_reads && second->sending, "pending write allows reads and precedes timeout retries");
     send_bytes(&f, second_size - first_write);
     check(output_size == second_size && memcmp(output, expected, second_size) == 0,
           "pending message remains contiguous across earlier timeout");
@@ -449,8 +449,62 @@ static void test_unsuback_validation(void)
           "malformed UNSUBACK never notifies success");
 }
 
+static void test_liveness_and_duplex(void)
+{
+    struct fixture f;
+    const uint8_t publish[] = {0x30, 4, 0, 1, 't', 'x'};
+    setup(&f);
+    queue_publish(&f, "blocked", MQTT_PUBLISH_QOS_0);
+    send_bytes(&f, 0);
+    input = publish; input_size = sizeof(publish);
+    check(mqtt_sync(&f.client) == MQTT_OK && received == 1, "read while write has no progress");
+    mqtt_test_time = 60;
+    check(mqtt_sync(&f.client) == MQTT_ERROR_RESPONSE_TIMEOUT, "stalled write terminates");
+    setup(&f);
+    f.client.keep_alive = 60;
+    mqtt_test_time = 61;
+    send_bytes(&f, sizeof(output));
+    send_bytes(&f, sizeof(output));
+    mqtt_test_time = 91;
+    check(mqtt_sync(&f.client) == MQTT_ERROR_RESPONSE_TIMEOUT, "missing PINGRESP terminates");
+    setup(&f);
+    queue_publish(&f, "qos2", MQTT_PUBLISH_QOS_2);
+    send_bytes(&f, sizeof(output));
+    check(output[0] == 0x34, "QoS2 initial DUP clear");
+    output_size = 0; mqtt_test_time = 31;
+    send_bytes(&f, 1);
+    send_bytes(&f, sizeof(output) - 1);
+    check(output[0] == 0x3c, "QoS2 partial retry sets DUP");
+    mqtt_test_time = 120;
+    check(mqtt_sync(&f.client) == MQTT_ERROR_RESPONSE_TIMEOUT, "unacknowledged request has terminal deadline");
+}
+static void test_control_reserve(void)
+{
+    struct fixture f;
+    uint8_t ack[4] = {0x50, 2, 0, 0};
+    enum MQTTErrors result;
+    size_t before;
+    setup(&f);
+    check(mqtt_subscribe(&f.client, "head", 0) == MQTT_OK, "blocked queue head");
+    queue_publish(&f, "qos2", MQTT_PUBLISH_QOS_2);
+    ack[2] = (uint8_t)(mqtt_mq_get(&f.client.mq, 1)->packet_id >> 8);
+    ack[3] = (uint8_t)mqtt_mq_get(&f.client.mq, 1)->packet_id;
+    do { result = mqtt_publish(&f.client, "t", "x", 1, MQTT_PUBLISH_QOS_0); } while (result == MQTT_OK);
+    check(result == MQTT_ERROR_SEND_BUFFER_IS_FULL, "business capacity bounded");
+    f.client.error = MQTT_OK;
+    send_bytes(&f, sizeof(output));
+    before = (size_t)mqtt_mq_length(&f.client.mq);
+    input = ack; input_size = sizeof(ack);
+    check(mqtt_sync(&f.client) == MQTT_OK, "full business queue can process PUBREC");
+    mqtt_mq_clean(&f.client.mq);
+    check((size_t)mqtt_mq_length(&f.client.mq) < before, "completed middle messages reclaimed");
+    check(mqtt_mq_find(&f.client.mq, MQTT_CONTROL_PUBREL, NULL) != NULL, "PUBREL remains queued");
+}
+
 int main(void)
 {
+    test_liveness_and_duplex();
+    test_control_reserve();
     test_resume(0);
     test_resume(2);
     test_retry_and_ack();

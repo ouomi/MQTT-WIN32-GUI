@@ -17,7 +17,7 @@ struct AppSettings {
     int window_height{};
 };
 
-AppSettings LoadAppSettings(AppLanguage fallback_language);
-void SaveAppSettings(const AppSettings& settings);
+AppSettings LoadAppSettings(AppLanguage fallback_language, const std::wstring& path = {});
+bool SaveAppSettings(const AppSettings& settings, const std::wstring& path = {});
 
 } // namespace win32mqtt

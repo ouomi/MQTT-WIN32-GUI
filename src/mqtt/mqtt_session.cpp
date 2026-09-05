@@ -4,10 +4,12 @@
 #include "mqtt_topic.hpp"
 #include "mqtt_disconnect.hpp"
 #include "mqtt_connect_attempt.hpp"
+#if defined(_WIN32)
 #include "mqtt_dns.hpp"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#endif
 
 #if WIN32MQTT_ENABLE_TLS
 #include <openssl/ssl.h>
@@ -52,7 +54,7 @@ std::string ExecutableDirectoryUtf8() {
 } // namespace
 
 struct MqttSession::Impl {
-    enum class CommandType { Connect, Disconnect, Subscribe, Unsubscribe, Publish };
+    enum class CommandType { Connect, Disconnect, Publish };
     struct Command {
         CommandType type;
         MqttEndpoint endpoint;
@@ -61,9 +63,11 @@ struct MqttSession::Impl {
         MqttPublishQos qos;
         std::optional<MqttLastWill> last_will;
         MqttConnectAttempt::Cancellation cancellation{};
+        std::uint64_t operation = 0;
+        std::uint64_t generation = 0;
     };
 
-    explicit Impl(EventHandler handler) : handler(std::move(handler)) {
+    explicit Impl(EventHandler handler, std::shared_ptr<MqttSessionBackend> backend) : backend(std::move(backend)), handler(std::move(handler)) {
         // Run may access every member, so start only after member initialization.
         worker = std::thread(&Impl::Run, this);
     }
@@ -83,7 +87,7 @@ struct MqttSession::Impl {
                 fits = MqttPacketFits({2, command.first.size(), command.second.size(),
                     command.qos == MqttPublishQos::Qos0 ? 0u : 2u});
             } else {
-                fits = MqttPacketFits({4, command.first.size(), command.type == CommandType::Subscribe ? 1u : 0u});
+                fits = false;
             }
             if (!fits) return MqttAdmission::TooLarge;
         }
@@ -96,9 +100,13 @@ struct MqttSession::Impl {
               if (latest_connect) latest_connect->cancelled.store(true);
               if (commands.ControlPending()) return MqttAdmission::Accepted;
           }
+          const bool publishing = command.type == CommandType::Publish;
+          if (publishing && outstanding_publishes >= 256) return MqttAdmission::QueueFull;
+          if (publishing) { command.operation = ++request_sequence; command.generation = generation.load(); }
           auto cancellation = connecting ? std::make_shared<MqttConnectCancellation>() : nullptr;
           command.cancellation = cancellation;
           if (!commands.Push(std::move(command), bytes, disconnecting)) return MqttAdmission::QueueFull;
+          if (publishing) ++outstanding_publishes;
           // Rejected replacement connections must not cancel the accepted request.
           if (connecting) {
               if (latest_connect) latest_connect->cancelled.store(true);
@@ -118,16 +126,28 @@ struct MqttSession::Impl {
     void Emit(MqttEventType type, MqttConnectionState next_state, std::string detail = {},
               std::string topic = {}, std::string payload = {},
               MqttPublishQos publish_qos = MqttPublishQos::Qos0) {
+        if (type == MqttEventType::PublishQueued || type == MqttEventType::PublishRejected) {
+            std::lock_guard<std::mutex> lock(mutex);
+            publish_results.push_back(MqttEvent{type, next_state, std::move(detail), std::move(topic),
+                std::move(payload), publish_qos, false, false, 0, active_generation, active_operation});
+            return;
+        }
         if (handler) {
             handler(MqttEvent{type, next_state, std::move(detail), std::move(topic),
-                              std::move(payload), publish_qos});
+                              std::move(payload), publish_qos, false, false, 0, generation, ++event_id});
         }
     }
     static void Published(void** state, struct mqtt_response_publish* published) {
         auto* self = static_cast<Impl*>(*state);
-        self->Emit(MqttEventType::MessageReceived, MqttConnectionState::Connected, {},
-                   std::string(static_cast<const char*>(published->topic_name), published->topic_name_size),
-                   std::string(static_cast<const char*>(published->application_message), published->application_message_size));
+        MqttEvent event{MqttEventType::MessageReceived, MqttConnectionState::Connected, {},
+            std::string(static_cast<const char*>(published->topic_name), published->topic_name_size),
+            std::string(static_cast<const char*>(published->application_message), published->application_message_size),
+            static_cast<MqttPublishQos>(published->qos_level)};
+        event.retain = published->retain_flag; event.dup = published->dup_flag;
+        event.packet_id = published->packet_id; event.generation = self->generation;
+        event.received_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            self->Now().time_since_epoch()).count();
+        if (self->handler) self->handler(std::move(event));
     }
     static void Subscribed(void* state, const mqtt_queued_message* request, std::uint8_t code) {
         SubscriptionResult(state, request, code);
@@ -151,6 +171,8 @@ struct MqttSession::Impl {
         const std::string detail = !code.has_value() ? ": unsubscription acknowledged by broker"
             : *code == MQTT_SUBACK_FAILURE ? ": subscription rejected by broker"
             : ": subscription accepted by broker (QoS " + std::to_string(*code) + ")";
+        { std::lock_guard<std::mutex> lock(self->mutex);
+          self->subscriptions.Complete(topic, request->packet_id, !code || *code != MQTT_SUBACK_FAILURE); }
         self->Emit(MqttEventType::Log, self->state, topic + detail);
     }
     static std::uint8_t PublishFlags(MqttPublishQos qos) {
@@ -162,7 +184,7 @@ struct MqttSession::Impl {
         return MQTT_PUBLISH_QOS_0;
     }
     bool ConnectionPending(std::string& error) {
-        const auto status = connect_attempt.Check(MqttConnectAttempt::Clock::now());
+        const auto status = connect_attempt.Check(Now());
         if (stopped.load() || status == MqttConnectAttempt::Status::Cancelled) {
             error = "connection cancelled"; return false;
         }
@@ -177,7 +199,10 @@ struct MqttSession::Impl {
             return stopped.load() || connect_attempt.Cancelled();
         });
     }
+    std::chrono::steady_clock::time_point Now() const { return backend ? backend->Now() : std::chrono::steady_clock::now(); }
     bool OpenSocket(const MqttEndpoint& endpoint, std::string& error) {
+        if (backend) return backend->Open(endpoint, [this, &error] { return !ConnectionPending(error); }, error);
+#if defined(_WIN32)
         MqttDnsQuery query;
         if (!ConnectionPending(error) || !query.Start(endpoint.host, endpoint.port, error)) return false;
         while (!query.Done()) {
@@ -186,7 +211,7 @@ struct MqttSession::Impl {
         }
         if (!ConnectionPending(error)) return false;
         if (query.Error() != 0) { error = "DNS lookup failed"; return false; }
-        connect_attempt.Enter(MqttConnectAttempt::Phase::Tcp, MqttConnectAttempt::Clock::now());
+        connect_attempt.Enter(MqttConnectAttempt::Phase::Tcp, Now());
         // One deadline covers all addresses, not ten seconds per address.
         for (const auto* address = query.Addresses(); address; address = address->ai_next) {
             if (!ConnectionPending(error)) return false;
@@ -218,12 +243,15 @@ struct MqttSession::Impl {
         }
         if (ConnectionPending(error)) error = "TCP connection failed";
         return false;
+#else
+        (void)endpoint; error = "a transport backend is required"; return false;
+#endif
     }
 #if WIN32MQTT_ENABLE_TLS
     bool ConfigureTransport(const MqttEndpoint& endpoint, std::string& error) {
         if (!ConnectionPending(error)) return false;
         if (endpoint.secure) {
-            connect_attempt.Enter(MqttConnectAttempt::Phase::Tls, MqttConnectAttempt::Clock::now());
+            connect_attempt.Enter(MqttConnectAttempt::Phase::Tls, Now());
             ssl_context = SSL_CTX_new(TLS_client_method());
             const std::string ca_bundle = ExecutableDirectoryUtf8() + "ca-bundle.pem";
             if (ssl_context == nullptr || ca_bundle.empty() ||
@@ -256,11 +284,15 @@ struct MqttSession::Impl {
 #endif
     void CloseSocket() {
         client_initialized = false;
+        { std::lock_guard<std::mutex> lock(mutex); subscriptions.Reset(generation); }
 #if WIN32MQTT_ENABLE_TLS
         if (transport != nullptr) { BIO_free_all(transport); transport = nullptr; }
         if (ssl_context != nullptr) { SSL_CTX_free(ssl_context); ssl_context = nullptr; }
 #endif
+        if (backend) backend->Close();
+#if defined(_WIN32)
         if (socket_handle != INVALID_SOCKET) { closesocket(socket_handle); socket_handle = INVALID_SOCKET; }
+#endif
     }
     void CompleteCancelledConnect() {
         CloseSocket(); state = MqttConnectionState::Disconnected; awaiting_connack = false;
@@ -275,7 +307,8 @@ struct MqttSession::Impl {
             Fail("invalid MQTT Last Will topic");
             return;
         }
-        connect_attempt.Begin(std::move(cancellation), MqttConnectAttempt::Clock::now());
+        ++generation;
+        connect_attempt.Begin(std::move(cancellation), Now());
         CloseSocket(); state = MqttConnectionState::Connecting;
         Emit(MqttEventType::StateChanged, state, FormatMqttEndpointUri(endpoint));
         std::string error;
@@ -283,6 +316,20 @@ struct MqttSession::Impl {
             if (stopped.load() || connect_attempt.Cancelled()) CompleteCancelledConnect(); else Fail(std::move(error));
             return;
         }
+        if (backend) {
+            mqtt_reinit(&client, {}, send_buffer.data(), send_buffer.size(), recv_buffer.data(), recv_buffer.size());
+            client.io_state = backend.get();
+            client.send_callback = [](void* p, const void* bytes, size_t n) -> ssize_t {
+                return static_cast<MqttSessionBackend*>(p)->Send(bytes, n);
+            };
+            client.recv_callback = [](void* p, void* bytes, size_t n) -> ssize_t {
+                return static_cast<MqttSessionBackend*>(p)->Receive(bytes, n);
+            };
+            client.clock_callback = [](void* p) -> mqtt_pal_time_t {
+                return std::chrono::duration_cast<std::chrono::seconds>(
+                    static_cast<MqttSessionBackend*>(p)->Now().time_since_epoch()).count();
+            };
+        } else {
 #if WIN32MQTT_ENABLE_TLS
         if (!ConfigureTransport(endpoint, error)) {
             if (stopped.load() || connect_attempt.Cancelled()) CompleteCancelledConnect(); else Fail(std::move(error));
@@ -293,6 +340,7 @@ struct MqttSession::Impl {
         if (endpoint.secure) { Fail("mqtts:// requires a TLS-enabled build"); return; }
         mqtt_reinit(&client, socket_handle, send_buffer.data(), send_buffer.size(), recv_buffer.data(), recv_buffer.size());
 #endif
+        }
         client_initialized = true;
         if (stopped.load() || connect_attempt.Cancelled()) { CompleteCancelledConnect(); return; }
         const char* will_topic = last_will ? last_will->topic.c_str() : nullptr;
@@ -309,7 +357,7 @@ struct MqttSession::Impl {
             &client, client_id.empty() ? nullptr : client_id.c_str(), will_topic, will_payload,
             will_payload_size, nullptr, nullptr, connect_flags, 60);
         if (result != MQTT_OK) { Fail(mqtt_error_str(result)); return; }
-        connect_attempt.Enter(MqttConnectAttempt::Phase::Connack, MqttConnectAttempt::Clock::now());
+        connect_attempt.Enter(MqttConnectAttempt::Phase::Connack, Now());
         awaiting_connack = true;
     }
     void FinishDisconnect(std::string detail = {}) {
@@ -324,7 +372,7 @@ struct MqttSession::Impl {
             FinishDisconnect();
             return;
         }
-        disconnect.Begin(MqttDisconnect::Clock::now());
+        disconnect.Begin(Now());
         awaiting_connack = false;
         state = MqttConnectionState::Disconnecting;
         Emit(MqttEventType::StateChanged, state);
@@ -339,7 +387,7 @@ struct MqttSession::Impl {
     }
     void Sync() {
         if (state == MqttConnectionState::Disconnecting) {
-            switch (disconnect.Poll(client, MqttDisconnect::Clock::now())) {
+            switch (disconnect.Poll(client, Now())) {
             case MqttDisconnect::Result::Pending: return;
             case MqttDisconnect::Result::Sent: FinishDisconnect(); return;
             case MqttDisconnect::Result::TimedOut:
@@ -363,11 +411,8 @@ struct MqttSession::Impl {
         }
     }
     void Handle(Command command) {
-        if ((command.type == CommandType::Subscribe || command.type == CommandType::Unsubscribe) &&
-            !IsValidSubscriptionFilter(command.first)) {
-            Emit(MqttEventType::Log, state, "invalid MQTT subscription filter");
-            return;
-        }
+        active_operation = command.operation;
+        active_generation = command.generation;
         switch (command.type) {
         case CommandType::Connect:
             if (!command.cancellation || command.cancellation->cancelled.load()) break;
@@ -382,22 +427,11 @@ struct MqttSession::Impl {
             next_connect.reset();
             BeginDisconnect();
             break;
-        case CommandType::Subscribe:
-        case CommandType::Unsubscribe: {
-            if (state != MqttConnectionState::Connected) {
-                Emit(MqttEventType::Log, state, "subscription operation rejected: not connected");
+        case CommandType::Publish: {
+            if (command.generation != generation.load()) {
+                Emit(MqttEventType::PublishRejected, state, "connection replaced before publish executed", command.first, {}, command.qos);
                 break;
             }
-            const auto result = MqttUserRequest(client, [&] {
-                return command.type == CommandType::Subscribe ? mqtt_subscribe(&client, command.first.c_str(), 0)
-                    : mqtt_unsubscribe(&client, command.first.c_str());
-            });
-            if (result != MQTT_OK) Emit(MqttEventType::Log, state,
-                command.first + ": " + (result == MQTT_ERROR_SEND_BUFFER_IS_FULL ?
-                    "subscription operation rejected: send queue full; retry later" : mqtt_error_str(result)));
-            break;
-        }
-        case CommandType::Publish: {
             if (!IsValidPublishTopic(command.first)) {
                 Emit(MqttEventType::PublishRejected, state, "invalid MQTT publish topic",
                      std::move(command.first), std::move(command.second), command.qos);
@@ -425,7 +459,9 @@ struct MqttSession::Impl {
         }
     }
     void Run() {
+#if defined(_WIN32)
         WSADATA data{}; if (WSAStartup(MAKEWORD(2, 2), &data) != 0) { Emit(MqttEventType::StateChanged, MqttConnectionState::Failed, "Winsock initialization failed"); return; }
+#endif
         mqtt_init_reconnect(&client, nullptr, nullptr, Published); client.publish_response_callback_state = this;
         client.subscribe_response_callback = Subscribed;
         client.subscribe_response_callback_state = this;
@@ -441,7 +477,14 @@ struct MqttSession::Impl {
                   pending.push_back(commands.Pop());
               } }
             for (Command& command : pending) {
-                if (stopped.load()) break;
+                if (stopped.load()) {
+                    if (command.type == CommandType::Publish) {
+                        active_operation = command.operation;
+                        active_generation = command.generation;
+                        Emit(MqttEventType::PublishRejected, state, "session stopped", command.first, {}, command.qos);
+                    }
+                    continue;
+                }
                 Handle(std::move(command));
             }
             // Stop takes priority over queued work and reuses an existing
@@ -452,24 +495,62 @@ struct MqttSession::Impl {
                 BeginDisconnect();
             }
             Sync();
+            if (state == MqttConnectionState::Connected && !stopped.load()) {
+                std::lock_guard<std::mutex> lock(mutex);
+                subscriptions.Advance(generation, [&](const std::string& topic, bool desired) {
+                    const auto result = MqttUserRequest(client, [&] {
+                        return desired ? mqtt_subscribe(&client, topic.c_str(), 0)
+                                       : mqtt_unsubscribe(&client, topic.c_str());
+                    });
+                    return result == MQTT_OK ? static_cast<int>(mqtt_mq_get(&client.mq, mqtt_mq_length(&client.mq) - 1)->packet_id)
+                        : result == MQTT_ERROR_SEND_BUFFER_IS_FULL ? 0 : -1;
+                });
+            }
             if (!stopped.load() && state == MqttConnectionState::Disconnected && next_connect) {
                 Command command = std::move(*next_connect);
                 next_connect.reset();
                 ConnectNow(command.endpoint, command.first, command.last_will, std::move(command.cancellation));
             }
         }
+        // Finalize accepted commands that Stop prevented from executing.
+        for (;;) {
+            std::optional<Command> command;
+            { std::lock_guard<std::mutex> lock(mutex);
+              if (commands.Empty()) break;
+              command = commands.Pop(); }
+            if (command->type == CommandType::Publish) {
+                active_operation = command->operation;
+                active_generation = command->generation;
+                Emit(MqttEventType::PublishRejected, state, "session stopped", command->first, {}, command->qos);
+            }
+        }
         CloseSocket();
+#if defined(_WIN32)
         DeleteCriticalSection(&client.mutex);
         WSACleanup();
+#else
+        MQTT_PAL_MUTEX_DESTROY(&client.mutex);
+#endif
     }
 
+    std::shared_ptr<MqttSessionBackend> backend;
+    std::vector<MqttEvent> publish_results;
+    std::size_t outstanding_publishes = 0;
+    std::uint64_t request_sequence = 0, active_operation = 0, active_generation = 0;
+    MqttSubscriptions subscriptions;
+    std::atomic<std::uint64_t> generation{0};
+    std::uint64_t event_id = 0;
     EventHandler handler; std::mutex mutex; std::condition_variable wake; MqttCommandQueue<Command> commands; std::thread worker;
     MqttConnectAttempt connect_attempt;
     MqttConnectAttempt::Cancellation latest_connect; // Protected by mutex.
     std::atomic<bool> stopped{false}; bool stopping = false; bool awaiting_connack = false; bool client_initialized = false;
     MqttDisconnect disconnect;
     std::optional<Command> next_connect;
+#if defined(_WIN32)
     SOCKET socket_handle = INVALID_SOCKET;
+#else
+    mqtt_pal_socket_handle socket_handle = 0;
+#endif
 #if WIN32MQTT_ENABLE_TLS
     BIO* transport = nullptr;
     SSL_CTX* ssl_context = nullptr;
@@ -479,7 +560,8 @@ struct MqttSession::Impl {
     std::array<std::uint8_t, MqttReceiveCapacity> recv_buffer{};
 };
 
-MqttSession::MqttSession(EventHandler handler) : impl_(std::make_unique<Impl>(std::move(handler))) {}
+MqttSession::MqttSession(EventHandler handler, std::shared_ptr<MqttSessionBackend> backend)
+    : impl_(std::make_unique<Impl>(std::move(handler), std::move(backend))) {}
 MqttSession::~MqttSession() = default;
 MqttAdmission MqttSession::Connect(MqttEndpoint endpoint, std::string client_id,
                           std::optional<MqttLastWill> last_will) {
@@ -491,12 +573,20 @@ void MqttSession::Disconnect() {
                     std::nullopt});
 }
 MqttAdmission MqttSession::Subscribe(std::string topic) {
-    return impl_->Enqueue({Impl::CommandType::Subscribe, {}, std::move(topic), {},
-                    MqttPublishQos::Qos0, std::nullopt});
+    if (!IsValidSubscriptionFilter(topic) || !MqttPacketFits({5, topic.size()})) return MqttAdmission::TooLarge;
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (impl_->stopped.load()) return MqttAdmission::Stopped;
+    std::vector<std::string> topics;
+    for (const auto& r : impl_->subscriptions.Snapshot()) if (r.desired && r.topic != topic) topics.push_back(r.topic);
+    topics.push_back(std::move(topic));
+    return impl_->subscriptions.SetDesired(topics) ? MqttAdmission::Accepted : MqttAdmission::QueueFull;
 }
 MqttAdmission MqttSession::Unsubscribe(std::string topic) {
-    return impl_->Enqueue({Impl::CommandType::Unsubscribe, {}, std::move(topic), {},
-                    MqttPublishQos::Qos0, std::nullopt});
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (impl_->stopped.load()) return MqttAdmission::Stopped;
+    std::vector<std::string> topics;
+    for (const auto& r : impl_->subscriptions.Snapshot()) if (r.desired && r.topic != topic) topics.push_back(r.topic);
+    return impl_->subscriptions.SetDesired(topics) ? MqttAdmission::Accepted : MqttAdmission::QueueFull;
 }
 MqttAdmission MqttSession::Publish(std::string topic, std::string payload, MqttPublishQos qos) {
     return impl_->Enqueue({Impl::CommandType::Publish, {}, std::move(topic), std::move(payload), qos,
@@ -505,3 +595,27 @@ MqttAdmission MqttSession::Publish(std::string topic, std::string payload, MqttP
 void MqttSession::Stop() { impl_->Stop(); }
 
 } // namespace win32mqtt
+
+namespace win32mqtt {
+MqttAdmission MqttSession::SetSubscriptions(std::vector<std::string> topics) {
+    for (const auto& topic : topics)
+        if (!IsValidSubscriptionFilter(topic) || !MqttPacketFits({5, topic.size()})) return MqttAdmission::TooLarge;
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (impl_->stopped.load()) return MqttAdmission::Stopped;
+    return impl_->subscriptions.SetDesired(topics) ? MqttAdmission::Accepted : MqttAdmission::QueueFull;
+}
+std::vector<MqttSubscriptionStatus> MqttSession::Subscriptions() const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->subscriptions.Snapshot();
+}
+}
+
+namespace win32mqtt {
+std::vector<MqttEvent> MqttSession::TakePublishResults() {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    std::vector<MqttEvent> results;
+    results.swap(impl_->publish_results);
+    impl_->outstanding_publishes -= results.size();
+    return results;
+}
+}

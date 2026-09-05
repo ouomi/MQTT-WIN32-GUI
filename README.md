@@ -88,8 +88,9 @@ dist/<release-preset>/         可直接打包分发的完整目录
 - 使用 MQTT 3.1.1，当前连接界面不提供用户名/密码配置。
 - 发送报文最多 **4096 编码字节**，接收报文最多 **8192 编码字节**，均包含协议开销。
 - 发布主题不能带 `+` 或 `#`；订阅过滤器可以使用合法的通配符。
-- 发布区输入 UTF-8 文本；非 UTF-8 接收内容显示为占位符，尚无十六进制视图。
-- 订阅勾选表示期望状态，Broker 的订阅/退订确认和订阅拒绝显示在日志中。
+- 发布区输入 UTF-8 文本；接收消息支持 Text/HEX 切换，保留原始字节和 QoS、retain、dup、Packet ID，最多保留 512 条 / 1 MiB 原始数据。
+- 订阅目录最多 256 条，过滤器最多 4088 个 UTF-8 字节。勾选表示期望状态，状态列显示同步、确认及拒绝；断线后逐项恢复，删除等待退订结束。
+- 配置先完整写入临时文件再替换；保存失败会提示并保留原配置。新格式仍支持读取旧 INI，但旧版本程序不能读取新格式的编码值。
 - 发布“已排队”表示本地排队成功，不代表对端已经收到或业务已经处理。
 - 日志有保留上限，高流量下可能丢弃显示事件并提示丢弃数量；日志不保存到磁盘。
 
@@ -181,8 +182,9 @@ The install step creates `dist/`, containing the EXE, licenses, and the CA and D
 - MQTT 3.1.1; the connection UI currently has no username/password settings.
 - Outgoing packets are limited to **4096 encoded bytes**, incoming packets to **8192 encoded bytes**, including protocol overhead.
 - Publish topics cannot contain `+` or `#`; subscription filters support valid wildcards.
-- Publishing accepts UTF-8 text. Non-UTF-8 received data appears as a placeholder; there is no hex view yet.
-- Subscription checkboxes represent desired state. Broker subscription/unsubscription acknowledgements and subscription rejection appear in the log.
+- Publishing accepts UTF-8 text. Received messages offer Text/HEX views with raw bytes, QoS, retain, dup and Packet ID; raw retention is bounded to 512 records / 1 MiB.
+- The subscription catalog holds up to 256 records with filters up to 4088 UTF-8 bytes. Checkboxes express desired state; the status column shows synchronization, acknowledgements and rejection. Reconnection restores subscriptions incrementally; deletion waits for unsubscription.
+- Settings are written completely to a temporary file before replacement. Failures are visible and preserve the previous file. New builds read legacy INI files; old builds cannot read the new encoded values.
 - “Publish queued” means accepted into the local queue, not received by the peer or processed by an application.
 - Logs have bounded retention. Heavy traffic may drop display events with a reported count; logs are not saved to disk.
 

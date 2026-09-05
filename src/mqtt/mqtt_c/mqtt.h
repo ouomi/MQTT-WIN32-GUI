@@ -191,6 +191,7 @@ struct mqtt_fixed_header {
     MQTT_ERROR(MQTT_ERROR_RESPONSE_INVALID_CONTROL_TYPE) \
     MQTT_ERROR(MQTT_ERROR_CONNECT_NOT_CALLED)            \
     MQTT_ERROR(MQTT_ERROR_SEND_BUFFER_IS_FULL)           \
+    MQTT_ERROR(MQTT_ERROR_RESPONSE_TIMEOUT)              \
     MQTT_ERROR(MQTT_ERROR_SOCKET_ERROR)                  \
     MQTT_ERROR(MQTT_ERROR_MALFORMED_REQUEST)             \
     MQTT_ERROR(MQTT_ERROR_RECV_BUFFER_TOO_SMALL)         \
@@ -945,6 +946,8 @@ struct mqtt_queued_message {
      *       the MQTT_QUEUED_AWAITING_ACK \c state.
      */
     mqtt_pal_time_t time_sent;
+    mqtt_pal_time_t created_at;
+    mqtt_pal_time_t last_progress;
 
     /**
      * @brief The control type of the message.
@@ -1069,7 +1072,7 @@ struct mqtt_queued_message* mqtt_mq_find(const struct mqtt_message_queue *mq, en
  *
  * @returns The mqtt_queued_message at \p index.
  */
-#define mqtt_mq_get(mq_ptr, index) (((struct mqtt_queued_message*) ((mq_ptr)->mem_end)) - 1 - index)
+#define mqtt_mq_get(mq_ptr, index) (((struct mqtt_queued_message*) ((mq_ptr)->mem_end)) - 1 - (index))
 
 /**
  * @brief Returns the number of messages in the message queue, \p mq_ptr.
@@ -1113,6 +1116,10 @@ struct mqtt_client {
      * This is used to allow partial send commands.
      */
     size_t send_offset;
+    void *io_state;
+    ssize_t (*send_callback)(void *, const void *, size_t);
+    ssize_t (*recv_callback)(void *, void *, size_t);
+    mqtt_pal_time_t (*clock_callback)(void *);
 
     /** 
      * @brief The timestamp of the last message sent to the buffer.

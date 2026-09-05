@@ -30,6 +30,7 @@ public:
                                                  const NMHDR& notification);
     bool HandleContextMenu(HWND owner, AppLanguage language, HWND source,
                            LPARAM position) const;
+    void UpdateStatus(const std::wstring& topic, const std::wstring& status, bool absent);
     std::vector<std::wstring> ActiveTopics() const;
     std::vector<SubscriptionRecord> Snapshot() const;
 

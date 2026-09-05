@@ -22,10 +22,17 @@ std::size_t SubscriptionCatalog::Find(const std::wstring& topic) const noexcept 
 }
 
 bool SubscriptionCatalog::Add(std::wstring topic) {
-    if (!IsValidSubscriptionFilter(topic) || Find(topic) != npos) {
+    if (records_.size() >= MaxSubscriptions || !topic_detail::Valid(std::wstring_view(topic), true, 4088) || Find(topic) != npos) {
         return false;
     }
     records_.push_back({std::move(topic), false});
+    return true;
+}
+
+bool SubscriptionCatalog::MarkRemoving(std::size_t index) {
+    if (index >= records_.size()) return false;
+    records_[index].removing = true;
+    records_[index].active = false;
     return true;
 }
 
@@ -48,7 +55,7 @@ bool SubscriptionCatalog::SetActive(std::size_t index, bool active) {
 void SubscriptionCatalog::Replace(std::vector<SubscriptionRecord> records) {
     records_.clear();
     for (SubscriptionRecord& record : records) {
-        if (IsValidSubscriptionFilter(record.topic) && Find(record.topic) == npos) {
+        if (records_.size() < MaxSubscriptions && topic_detail::Valid(std::wstring_view(record.topic), true, 4088) && Find(record.topic) == npos) {
             records_.push_back(std::move(record));
         }
     }

@@ -5,6 +5,7 @@
 #include "mqtt/mqtt_endpoint.hpp"
 #include "mqtt/mqtt_topic.hpp"
 #include "subscription_catalog.hpp"
+#include "settings_codec.hpp"
 
 namespace {
 
@@ -121,6 +122,12 @@ void TestTopicValidation() {
 } // namespace
 
 int main() {
+    win32mqtt::SubscriptionCatalog bounded;
+    for (int i = 0; i < 256; ++i) Check(bounded.Add(std::to_wstring(i)), "catalog accepts capacity");
+    Check(!bounded.Add(L"overflow") && bounded.Size() == 256, "catalog rejects 257th entry");
+    const std::wstring sensitive = L" \"quoted\"\t\r\n;= 中文 ";
+    Check(win32mqtt::DecodeSetting(win32mqtt::EncodeSetting(sensitive)) == sensitive, "INI values round trip losslessly");
+    Check(!win32mqtt::DecodeSetting(L"0000000z"), "malformed encoding rejected");
     TestEndpointParsing();
     TestSubscriptionCatalog();
     TestTopicValidation();

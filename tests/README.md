@@ -30,9 +30,9 @@ ctest --preset native-tests-asan
 
 The sanitizer test preset enables LeakSanitizer and makes UBSan stop on errors. LeakSanitizer may not run under ptrace-based debuggers or sandboxes; run it in a supported environment rather than treating an environment error as a pass.
 
-OpenSSL 开发库可选：可用时运行 11 项测试，否则运行 10 项并明确跳过 BIO。若要显式验证无 OpenSSL 的构建，使用独立目录：
+OpenSSL 开发库可选：Linux 上可用时运行 13 项测试，否则运行 11 项并明确跳过 BIO/TLS。若要显式验证无 OpenSSL 的构建，使用独立目录：
 
-OpenSSL development libraries are optional: 11 tests run when available, otherwise 10 run and BIO is explicitly skipped. To check a build without OpenSSL, use a separate directory:
+OpenSSL development libraries are optional: 13 tests run on Linux when available, otherwise 11 run and BIO/TLS are explicitly skipped. To check a build without OpenSSL, use a separate directory:
 
 ```sh
 cmake --preset native-tests -B build/tests-no-openssl -DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON
@@ -42,9 +42,9 @@ ctest --test-dir build/tests-no-openssl --output-on-failure
 
 ## 分组与覆盖 / Groups and coverage
 
-CTest 名称与可执行文件名称一致：`win32mqtt_<name>_tests`。每项测试有 10 秒超时。
+CTest 名称与可执行文件名称一致：`win32mqtt_<name>_tests`。组件测试有 10 秒超时，生产会话测试有 30 秒超时。
 
-CTest and executable names match: `win32mqtt_<name>_tests`. Each test has a 10-second timeout.
+CTest and executable names match: `win32mqtt_<name>_tests`. Component tests have a 10-second timeout; the production-session test has 30 seconds.
 
 | `<name>` | 标签 / Label | 覆盖内容 / Coverage |
 | --- | --- | --- |
@@ -58,6 +58,9 @@ CTest and executable names match: `win32mqtt_<name>_tests`. Each test has a 10-s
 | `connect_attempt` | `connection` | 连接阶段期限和取消隔离 / Connection phase deadlines and cancellation isolation |
 | `dns` | `connection` | 异步解析包装器、取消后回调与资源释放 / Async DNS wrapper, late callbacks, and cleanup |
 | `socket` | `transport` | Winsock 适配器的短读写、WOULDBLOCK、EOF / Winsock adapter partial I/O, WOULDBLOCK, and EOF |
+| `session` | `connection` | 生产工作线程、100 个长主题恢复与退订、队列满后继续同步、拒绝快照、可靠发布结果、替代连接、失活、停止及取消 / Production worker orchestration with injected transport and time (Linux) |
+| `tls` | `transport` | 真实证书验证与 TLS 握手、WANT_READ/WANT_WRITE、移动写缓冲、普通 BIO 双向推进 / Real verified TLS handshake and retry scheduling |
+| `settings` | `core` | Windows 原子替换、不可写目标、容量失败保留旧文件、INI 精确往返 / Windows atomic replacement and persistence failures |
 | `bio` | `transport` | OpenSSL BIO 重试和有限缓冲区 / OpenSSL BIO retries and bounded buffers |
 
 ```sh
@@ -79,9 +82,9 @@ The former `mqtt_backpressure_tests.c` is now `mqtt_protocol_tests.c`, reflectin
 
 Tests compile the production protocol and helper components. `mqtt_test_pal.h` replaces platform types, locks, and clocks; `mqtt_transport_pal.h` replaces Winsock calls; `mqtt_dns_test_api.hpp` injects Windows DNS API results. BIO tests use real OpenSSL BIOs without a TLS handshake. DNS and display tests include real test threads.
 
-目前不执行 Windows GUI、真实 DNS 服务、生产会话线程编排、TLS 握手、实际 Broker 或遗嘱集成流程。组件测试通过不等于这些运行链路已验证。
+Linux 原生套件执行生产会话线程编排和真实 TLS 握手，但默认不执行 Windows GUI、真实 Windows DNS 服务、实际 Broker 或遗嘱集成流程。Windows/Broker 入口见下方，交叉编译成功不等于运行验证。
 
-The suite does not execute the Windows GUI, real DNS service, production session-thread orchestration, TLS handshakes, or real broker/Last Will integration. Passing component tests does not establish that those paths have been validated.
+The Linux suite now executes production session orchestration and real TLS handshakes. Windows GUI, Windows DNS and broker/Last Will integration require the separate Windows runner below. A cross-build is not execution evidence.
 
 发布预设默认 `BUILD_TESTING=OFF`。可在独立交叉编译目录中显式启用测试以验证 Windows 编译；仅在配置 `CMAKE_CROSSCOMPILING_EMULATOR` 时才注册可执行的交叉编译测试，编译成功不等于运行通过。Windows 测试运行时需保证其运行时 DLL 可被加载。
 
@@ -90,3 +93,29 @@ Release presets default to `BUILD_TESTING=OFF`. Enable it in a separate cross-bu
 初始化测试保留负向验证入口：`build/native-tests-asan/tests/win32mqtt_init_tests --reproduce-unlocked-connect`。预期退出码为 1，并报告 `FAIL: unlock without ownership`；它不属于正常 CTest 套件。
 
 Initialization tests retain a negative check: `build/native-tests-asan/tests/win32mqtt_init_tests --reproduce-unlocked-connect`. It must exit with code 1 and report `FAIL: unlock without ownership`; it is not part of the normal CTest suite.
+
+
+## Windows / Broker 集成
+
+在 Windows 的独立构建目录启用 `BUILD_TESTING=ON`、`WIN32MQTT_ENABLE_TLS=ON` 和
+`WIN32MQTT_BROKER_TESTS=ON`，并配置已安装的 OpenSSL。构建后先运行 CTest，
+其中 `settings` 会直接调用 Windows 文件 API 验证保存失败保留原文件。
+
+`win32mqtt_live_tests.exe` 使用默认生产 DNS/socket/TLS 实现，不使用注入后端。
+准备好 Mosquitto 和 OpenSSL 命令行工具，并确保测试程序依赖的 DLL 可加载后运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tests/run-windows-broker.ps1 `
+  -Executable build/windows/tests/Debug/win32mqtt_live_tests.exe `
+  -Mosquitto 'C:/Program Files/mosquitto/mosquitto.exe' `
+  -OpenSSL 'C:/Program Files/OpenSSL-Win64/bin/openssl.exe'
+```
+
+路径按实际构建目录和安装目录调整。脚本在本机 18883/18884 端口启动独立 Broker，
+生成临时 localhost 证书，分别验证 TCP、TLS 的 QoS 0/1/2 二进制消息收发，
+以及客户端异常退出后的 Last Will；再验证主机名不匹配时 TLS 连接失败。
+脚本在退出时停止自己启动的 Broker，并恢复测试程序目录原有的 CA 文件。
+该入口不属于默认无 Broker 的 CTest 套件，也不覆盖 GUI 操作和真实外网压力。
+
+本次 Linux 工作区未运行上述 Windows 场景；只交叉编译了应用、Windows 配置测试和
+真实 Broker 测试入口。请保留这一验证边界，直到 Windows 运行结果可用。

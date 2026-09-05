@@ -1,5 +1,6 @@
 #include "mqtt/mqtt_event_queue.hpp"
 #include "message_log.hpp"
+#include "mqtt/mqtt_message_store.hpp"
 #include "win32/mqtt_window_bridge.h"
 
 #include <atomic>
@@ -104,6 +105,21 @@ static void TestLog() {
     Check(log.Text() == std::wstring(8188, L'x') + L"\u2026\r\n", "truncate without splitting UTF-16 pair");
 }
 int main() {
+    MqttMessageStore raw;
+    auto binary = Message(std::string("\0\xff", 2));
+    binary.retain = true; binary.dup = true; binary.packet_id = 42;
+    raw.Push(binary);
+    Check(raw.Records()[0].payload == binary.payload && raw.Records()[0].retain && raw.Records()[0].packet_id == 42,
+          "raw binary and metadata retained");
+    Check(MqttMessageStore::Hex(binary.payload) == L"00 FF ", "lossless binary hex view");
+    for (int i = 0; i < 600; ++i) raw.Push(binary);
+    Check(raw.Records().size() == MqttMessageStore::MaxRecords, "raw record retention bounded");
+    MqttEventQueue epochs;
+    auto old = Message("old"); old.generation = 1; epochs.Push(old);
+    auto next = State(MqttConnectionState::Connected); next.generation = 2; epochs.Push(next);
+    epochs.Push(old);
+    const auto batch = epochs.Take();
+    Check(batch.events.size() == 1 && batch.events[0].generation == 2, "old connection history cannot follow new state");
     TestCountAndState(); TestBytesAndClose(); TestConcurrent(); TestLog();
     std::cout << "Bounded event delivery and log tests passed\n";
 }

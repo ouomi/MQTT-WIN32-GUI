@@ -24,11 +24,16 @@ public:
     void Push(MqttEvent event) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (closed_) return;
+        if (event.generation < generation_) return;
+        if (event.generation > generation_) {
+            generation_ = event.generation;
+            dropped_ += events_.size(); events_.clear(); bytes_ = 0; latest_state_.reset();
+        }
         const bool state = event.type == MqttEventType::StateChanged;
         if (state) {
             // State payload is not message data. Bound even a malformed producer.
             auto detail = event.detail.substr(0, MaxFieldBytes);
-            event = MqttEvent{event.type, event.connection_state, std::move(detail), {}, {}, event.publish_qos};
+            event.detail = std::move(detail); event.topic.clear(); event.payload.clear();
         } else if (event.detail.size() > MaxFieldBytes || event.topic.size() > MaxFieldBytes ||
                    event.payload.size() > MaxFieldBytes) {
             ++dropped_;
@@ -74,6 +79,7 @@ private:
     std::size_t bytes_ = 0;
     std::size_t dropped_ = 0;
     bool closed_ = false;
+    std::uint64_t generation_ = 0;
 };
 
 } // namespace win32mqtt

@@ -19,3 +19,5 @@
 #define IDC_WILL_TOGGLE     50019
 
 #define IDM_SUB_REMOVE      40104
+
+#define IDC_RAW_MESSAGES 50020
