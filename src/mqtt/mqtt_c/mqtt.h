@@ -938,6 +938,7 @@ struct mqtt_queued_message {
     /** @brief A write is in progress, including a transport retry with zero bytes sent.
      * The message must remain queued even if its previous transmission is acknowledged. */
     uint8_t sending;
+    uint8_t sent_once; /* A complete first transmission preceded any ACK. */
 
     /** 
      * @brief The time at which the message was sent..
@@ -1100,6 +1101,14 @@ struct mqtt_client {
 
     /** @brief The LFSR state used to generate packet ID's. */
     uint16_t pid_lfsr;
+
+    /* Session-local acknowledgement history survives send-queue compaction.
+     * One control-type byte per outbound ID; cleared when that ID is reused.
+     * Inbound QoS 2 ownership is independent of outbound packet storage and
+     * covers the entire 16-bit ID space (8 KiB), so bursts cannot pin the queue.
+     * These arrays are reset for each new network session by mqtt_reinit. */
+    uint8_t completed_ack[65536];
+    uint8_t incoming_qos2[8192];
 
     /** @brief The keep-alive time in seconds. */
     uint16_t keep_alive;

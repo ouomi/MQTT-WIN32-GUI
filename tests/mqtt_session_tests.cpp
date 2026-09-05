@@ -41,6 +41,19 @@ public:
                 static_cast<uint8_t>(type == 8 ? 3 : 2), p[header], p[header + 1]});
             if (type == 8) input.push_back(reject ? 0x80 : 0);
         }
+        if (type == 3) {
+            ++publishes;
+            if (((p[0] >> 1) & 3) == 1 && delay_publish_ack) {
+                mqtt_response publish{};
+                check(mqtt_unpack_response(&publish, p, n) > 0, "decode outgoing publication");
+                delayed_id = publish.decoded.publish.packet_id;
+                if (++qos1_sends == 2)
+                    input.insert(input.end(), {0x40, 2, static_cast<uint8_t>(delayed_id >> 8),
+                                               static_cast<uint8_t>(delayed_id)});
+            }
+        }
+        if (type == 5) ++pubrecs;
+        if (type == 7) ++pubcomps;
         if (type == 12) ++pings; // deliberately no PINGRESP
         if (type == 14) ++disconnects;
         return n;
@@ -56,10 +69,60 @@ public:
         return std::chrono::steady_clock::time_point(std::chrono::seconds(seconds.load()));
     }
     std::atomic<int> opens{0}, subscriptions{0}, disconnects{0}, pings{0}, seconds{0}, blocked_calls{0};
+    std::atomic<int> publishes{0}, qos1_sends{0}, pubrecs{0}, pubcomps{0};
+    bool delay_publish_ack = false; // Set before the session worker is created.
+    uint16_t delayed_id = 0; // Protected by mutex.
     std::atomic<bool> blocked{false}, reject{false}, block_open{false};
     std::mutex mutex; std::deque<uint8_t> input;
 };
+static void test_protocol_recovery_in_worker() {
+    auto broker = std::make_shared<Broker>();
+    broker->delay_publish_ack = true;
+    std::atomic<MqttConnectionState> state{MqttConnectionState::Disconnected};
+    std::atomic<int> messages{0};
+    MqttSession session([&](MqttEvent event) {
+        if (event.type == MqttEventType::StateChanged) state = event.connection_state;
+        if (event.type == MqttEventType::MessageReceived) ++messages;
+    }, broker);
+    check(session.Connect({"localhost", "1883", false}, "recovery") == MqttAdmission::Accepted, "recovery connect");
+    wait([&] { return state == MqttConnectionState::Connected; });
+    check(session.Publish("t", "x", MqttPublishQos::Qos1) == MqttAdmission::Accepted, "QoS1 worker publication");
+    wait([&] { return broker->qos1_sends == 1; });
+    broker->seconds = 31;
+    wait([&] { return broker->qos1_sends == 2; });
+    // Small batches let the worker send every request and reclaim the old ACK.
+    for (int batch = 0; batch < 25; ++batch) {
+        for (int i = 0; i < 8; ++i)
+            check(session.Publish("t", "x", MqttPublishQos::Qos0) == MqttAdmission::Accepted, "worker churn admission");
+        wait([&] { return broker->publishes >= 2 + 8 * (batch + 1); });
+        session.TakePublishResults();
+    }
+    {
+        std::lock_guard<std::mutex> lock(broker->mutex);
+        broker->input.insert(broker->input.end(), {0x40, 2,
+            static_cast<uint8_t>(broker->delayed_id >> 8), static_cast<uint8_t>(broker->delayed_id)});
+        // Broker-injected QoS2 burst exercises production receiving regardless
+        // of the UI's current QoS0 subscription preference.
+        for (int id = 1; id <= 200; ++id)
+            broker->input.insert(broker->input.end(), {0x34, 5, 0, 1, 't',
+                static_cast<uint8_t>(id >> 8), static_cast<uint8_t>(id)});
+    }
+    wait([&] { return messages == 200 && broker->pubrecs == 200; });
+    {
+        std::lock_guard<std::mutex> lock(broker->mutex);
+        for (int id = 1; id <= 200; ++id)
+            broker->input.insert(broker->input.end(), {0x62, 2,
+                static_cast<uint8_t>(id >> 8), static_cast<uint8_t>(id)});
+        broker->input.insert(broker->input.end(), {0x62, 2, 0, 1});
+    }
+    wait([&] { return broker->pubcomps == 201; });
+    check(state == MqttConnectionState::Connected && messages == 200,
+          "late ACK and QoS2 burst keep production session connected without duplicate delivery");
+    session.Stop();
+}
+
 int main() {
+    test_protocol_recovery_in_worker();
     MqttSubscriptions model;
     check(model.SetDesired({"topic"}), "initial model intent");
     model.Advance(1, [](const auto&, bool) { return 10; });

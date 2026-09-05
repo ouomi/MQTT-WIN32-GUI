@@ -117,3 +117,8 @@ Network work belongs to the session thread. The UI polls up to 64 events every 5
 连接阶段的 DNS/TCP/TLS/CONNACK 期限分别为 5/10/10/10 秒。取消标识属于单次连接请求；正常断开最多给 DISCONNECT 1 秒发送时间。这些不是整个 GUI 操作的硬实时保证，也不代表已实现所有连接存活检测。测试范围与限制见[测试说明](../tests/README.md)。
 
 DNS/TCP/TLS/CONNACK deadlines are 5/10/10/10 seconds. Cancellation belongs to individual connection attempts; graceful shutdown allows up to one second to send DISCONNECT. These are not hard real-time GUI guarantees or a claim of complete connection-liveness detection. See the [test guide](../tests/README.md) for validation boundaries.
+
+
+发送队列回收不会清除本会话的已完成确认历史；历史按 Packet ID 和确认类型保存，ID 分配给新请求时清除，新连接重置。接收 QoS 2 的去重状态与发送队列分离：PUBREC 写完后即可回收，等待 PUBREL 时只保留位图。每个客户端额外使用固定 72 KiB（64 KiB 确认历史、8 KiB 接收位图），内存不随消息总数增长；接收位图覆盖全部 65,535 个合法 ID。QoS 0 发布不占用 Packet ID。
+
+Completed ACK history survives send-queue compaction within a session, keyed by packet ID and ACK type. Assigning an ID to a new request clears its history; a new connection resets all history. Inbound QoS 2 deduplication lives outside the send queue: a written PUBREC can be reclaimed while its ownership bit remains until PUBREL. Storage is fixed at 72 KiB per client (64 KiB ACK history plus an 8 KiB inbound bitmap), covering all 65,535 legal inbound IDs. QoS 0 publications do not allocate packet IDs.

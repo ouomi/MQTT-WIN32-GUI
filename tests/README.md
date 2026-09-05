@@ -53,12 +53,12 @@ CTest and executable names match: `win32mqtt_<name>_tests`. Component tests have
 | `display` | `core` | 有界事件队列、并发消费、日志淘汰和文本截断 / Event bounds, concurrent consumption, log retention and truncation |
 | `publish` | `protocol` | PUBLISH 解析边界、畸形输入、空与二进制 payload / Parser bounds, malformed input, empty and binary payloads |
 | `init` | `protocol` | CONNECT 初始化和锁约定 / CONNECT initialization and lock ownership |
-| `protocol` | `protocol` | 短写、重试、确认、队列回收、SUBACK/UNSUBACK / Partial writes, retries, acknowledgements, queue cleanup, SUBACK/UNSUBACK |
+| `protocol` | `protocol` | 短写、重试、队列回收后迟到确认、重复确认、Packet ID 重用、QoS 2 全 ID 空间与拥塞恢复、确认报文校验 / Partial writes, late and duplicate ACKs after compaction, ID reuse, full QoS 2 ID space, backpressure recovery, ACK validation |
 | `disconnect` | `connection` | 有期限的 DISCONNECT 发送器 / Bounded DISCONNECT sender |
 | `connect_attempt` | `connection` | 连接阶段期限和取消隔离 / Connection phase deadlines and cancellation isolation |
 | `dns` | `connection` | 异步解析包装器、取消后回调与资源释放 / Async DNS wrapper, late callbacks, and cleanup |
 | `socket` | `transport` | Winsock 适配器的短读写、WOULDBLOCK、EOF / Winsock adapter partial I/O, WOULDBLOCK, and EOF |
-| `session` | `connection` | 生产工作线程、100 个长主题恢复与退订、队列满后继续同步、拒绝快照、可靠发布结果、替代连接、失活、停止及取消 / Production worker orchestration with injected transport and time (Linux) |
+| `session` | `connection` | 生产工作线程、100 个长主题恢复与退订、队列满恢复、可靠结果、迟到发布确认及 200 条 QoS 2 突发后连接保持、替代连接、失活、停止及取消 / Production worker orchestration, late publish ACKs and 200-message QoS 2 burst recovery (Linux) |
 | `tls` | `transport` | 真实证书验证与 TLS 握手、WANT_READ/WANT_WRITE、移动写缓冲、普通 BIO 双向推进 / Real verified TLS handshake and retry scheduling |
 | `settings` | `core` | Windows 原子替换、不可写目标、容量失败保留旧文件、INI 精确往返 / Windows atomic replacement and persistence failures |
 | `bio` | `transport` | OpenSSL BIO 重试和有限缓冲区 / OpenSSL BIO retries and bounded buffers |
