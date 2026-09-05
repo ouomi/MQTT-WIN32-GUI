@@ -19,7 +19,8 @@ inline AppSettings PersistentSettings(AppSettings settings) {
 inline bool SameSettings(const AppSettings& a, const AppSettings& b) {
     return a.language == b.language && a.server_uri == b.server_uri &&
         a.client_id == b.client_id && a.window_width == b.window_width &&
-        a.window_height == b.window_height && a.subscriptions.size() == b.subscriptions.size() &&
+        a.window_height == b.window_height &&
+        a.subscription_panel_width == b.subscription_panel_width && a.subscriptions.size() == b.subscriptions.size() &&
         std::equal(a.subscriptions.begin(), a.subscriptions.end(), b.subscriptions.begin(),
             [](const auto& x, const auto& y) { return x.topic == y.topic && x.active == y.active; });
 }

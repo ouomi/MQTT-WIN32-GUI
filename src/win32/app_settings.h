@@ -15,6 +15,7 @@ struct AppSettings {
     std::vector<SubscriptionRecord> subscriptions;
     int window_width{};
     int window_height{};
+    int subscription_panel_width{}; // Zero uses the default equal split.
 };
 
 AppSettings LoadAppSettings(AppLanguage fallback_language, const std::wstring& path = {});

@@ -24,6 +24,7 @@ constexpr wchar_t kServerUriKey[] = L"ServerUri";
 constexpr wchar_t kClientIdKey[] = L"ClientId";
 constexpr wchar_t kWindowWidthKey[] = L"Width";
 constexpr wchar_t kWindowHeightKey[] = L"Height";
+constexpr wchar_t kSubscriptionPanelWidthKey[] = L"SubscriptionPanelWidth";
 constexpr wchar_t kSubscriptionCountKey[] = L"Count";
 constexpr wchar_t kChineseLanguageValue[] = L"Chinese";
 constexpr wchar_t kEnglishLanguageValue[] = L"English";
@@ -118,6 +119,7 @@ AppSettings LoadAppSettings(AppLanguage fallback_language, const std::wstring& s
     }
     settings.window_width = ReadWindowDimension(path, kWindowWidthKey);
     settings.window_height = ReadWindowDimension(path, kWindowHeightKey);
+    settings.subscription_panel_width = ReadWindowDimension(path, kSubscriptionPanelWidthKey);
 
     const UINT count = std::min(GetPrivateProfileIntW(kSubscriptionsSection,
                                                        kSubscriptionCountKey, 0, path.c_str()),
@@ -152,7 +154,8 @@ bool SaveAppSettings(const AppSettings& input, const std::wstring& settings_path
     text += settings.language == AppLanguage::Chinese ? kChineseLanguageValue : kEnglishLanguageValue;
     text += L"\r\n[Connection]\r\nServerUri=" + EncodeSetting(settings.server_uri) + L"\r\nClientId=" + EncodeSetting(settings.client_id);
     text += L"\r\n[Window]\r\nWidth=" + std::to_wstring(settings.window_width) +
-            L"\r\nHeight=" + std::to_wstring(settings.window_height);
+            L"\r\nHeight=" + std::to_wstring(settings.window_height) +
+            L"\r\nSubscriptionPanelWidth=" + std::to_wstring(settings.subscription_panel_width);
     text += L"\r\n[Subscriptions]\r\nCount=" + std::to_wstring(settings.subscriptions.size());
     for (std::size_t i = 0; i < settings.subscriptions.size(); ++i) {
         const auto& r = settings.subscriptions[i];

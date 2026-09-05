@@ -69,6 +69,22 @@ void TestSettingsAutosave() {
     input.client_id = disk.client_id;
     autosave.Schedule(input, 7200, 500);
     Check(!autosave.Pending(), "reverting failed edit clears unsaved state");
+    input.subscription_panel_width = 380;
+    autosave.Schedule(input, 8000, 500);
+    Check(autosave.Poll(8499, save) == Result::Idle, "splitter save waits after release");
+    input.subscription_panel_width = 420;
+    autosave.Schedule(input, 8400, 500);
+    Check(autosave.Poll(8500, save) == Result::Idle, "another splitter change restarts delay");
+    Check(autosave.Poll(8900, save) == Result::Saved && disk.subscription_panel_width == 420,
+        "splitter-only change saves final width");
+    const auto splitter_writes = writes;
+    autosave.Schedule(input, 9000, 500);
+    Check(autosave.Poll(9500, save) == Result::Idle && writes == splitter_writes,
+        "unchanged splitter does not write again");
+    input.subscription_panel_width = 460;
+    autosave.Schedule(input, 9600, 500);
+    Check(autosave.Poll(9601, save, true) == Result::Saved && disk.subscription_panel_width == 460,
+        "closing flushes pending splitter position");
 }
 
 void TestEndpointParsing() {

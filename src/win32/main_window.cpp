@@ -155,7 +155,8 @@ int RestoredWindowDimension(int saved_dimension, int minimum_dimension) {
 // Owns window-level state and coordinates the otherwise independent Win32 panels.
 struct MainWindow::Impl {
     explicit Impl(AppSettings initial_settings)
-        : settings(std::move(initial_settings)), language(settings.language) {}
+        : settings(std::move(initial_settings)), language(settings.language),
+          subscription_panel_width(settings.subscription_panel_width) {}
 
     void CaptureNormalWindowSize() {
         WINDOWPLACEMENT placement{};
@@ -178,7 +179,7 @@ struct MainWindow::Impl {
     AppSettings CurrentSettings() {
         CaptureNormalWindowSize();
         return {language, connection.ServerUri(), connection.ClientId(), subscriptions.Snapshot(),
-                settings.window_width, settings.window_height};
+                settings.window_width, settings.window_height, subscription_panel_width};
     }
 
     void ScheduleSettingsSave(std::uint64_t delay = 0) {
@@ -188,6 +189,8 @@ struct MainWindow::Impl {
     }
 
     void SavePendingSettings(bool closing = false) {
+        // Defer all writes while dragging and through the release debounce period.
+        if (!closing && (splitter_dragging || GetTickCount64() < splitter_save_due)) return;
         const auto result = autosave.Poll(GetTickCount64(),
             [](const AppSettings& snapshot) { return SaveAppSettings(snapshot); }, closing);
         if (result == SettingsAutosave::Result::Idle) {
@@ -330,16 +333,21 @@ struct MainWindow::Impl {
         KillTimer(window, SplitterTimer);
         splitter_update_pending = false;
         MoveSplitter(x);
-        splitter_dragging = false;
+        CancelSplitterDrag();
         if (GetCapture() == window) {
             ReleaseCapture();
         }
     }
 
     void CancelSplitterDrag() {
+        const bool was_dragging = splitter_dragging;
         KillTimer(window, SplitterTimer);
         splitter_update_pending = false;
         splitter_dragging = false;
+        if (was_dragging) {
+            splitter_save_due = GetTickCount64() + 500;
+            ScheduleSettingsSave(500);
+        }
     }
 
     void PaintClassicPanels(HDC device_context) const {
@@ -516,6 +524,7 @@ struct MainWindow::Impl {
     AppLanguage language;
     MqttConnectionState connection_state{MqttConnectionState::Disconnected};
     int subscription_panel_width{};
+    std::uint64_t splitter_save_due{};
     bool splitter_dragging{};
     bool splitter_update_pending{};
     int pending_splitter_x{};
