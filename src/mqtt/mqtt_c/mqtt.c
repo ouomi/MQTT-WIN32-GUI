@@ -66,6 +66,22 @@ enum MQTTErrors mqtt_sync(struct mqtt_client *client) {
         if (err != MQTT_OK) return err;
     }
 
+    /* SSL_write retries must finish before another operation triggers I/O.
+     * Return after this send attempt so backpressure always yields to the caller. */
+    {
+        ssize_t i;
+        int pending_write = 0;
+        MQTT_PAL_MUTEX_LOCK(&client->mutex);
+        for (i = 0; i < mqtt_mq_length(&client->mq); ++i) {
+            if (mqtt_mq_get(&client->mq, i)->sending) {
+                pending_write = 1;
+                break;
+            }
+        }
+        MQTT_PAL_MUTEX_UNLOCK(&client->mutex);
+        if (pending_write) return (enum MQTTErrors)win32mqtt_send(client);
+    }
+
     /* Call receive */
     err = (enum MQTTErrors)win32mqtt_recv(client);
     if (err != MQTT_OK) return err;
@@ -187,6 +203,7 @@ void mqtt_reinit(struct mqtt_client* client,
 {
     client->error = MQTT_ERROR_CONNECT_NOT_CALLED;
     client->socketfd = socketfd;
+    client->send_offset = 0;
 
     mqtt_mq_init(&client->mq, sendbuf, sendbufsz);
 
@@ -509,6 +526,7 @@ ssize_t win32mqtt_send(struct mqtt_client *client)
     uint8_t inspected;
     ssize_t len;
     int inflight_qos2 = 0;
+    int pending_write = -1;
     int i = 0;
     
     MQTT_PAL_MUTEX_LOCK(&client->mutex);
@@ -520,13 +538,21 @@ ssize_t win32mqtt_send(struct mqtt_client *client)
 
     /* loop through all messages in the queue */
     len = mqtt_mq_length(&client->mq);
-    for(; i < len; ++i) {
+    /* Finish a transport write before any other message, including timed-out
+     * messages earlier in the queue. BIO retries must keep the same bytes. */
+    for (i = 0; i < len; ++i) {
+        if (mqtt_mq_get(&client->mq, i)->sending) {
+            pending_write = i;
+            break;
+        }
+    }
+    for(i = 0; i < len; ++i) {
         struct mqtt_queued_message *msg = mqtt_mq_get(&client->mq, i);
         int resend = 0;
-        if (msg->state == MQTT_QUEUED_UNSENT) {
+        if (msg->sending || msg->state == MQTT_QUEUED_UNSENT) {
             /* message has not been sent to lets send it */
             resend = 1;
-        } else if (msg->state == MQTT_QUEUED_AWAITING_ACK) {
+        } else if (msg->state == MQTT_QUEUED_AWAITING_ACK && pending_write < 0) {
             /* check for timeout */
             if (MQTT_PAL_TIME() > msg->time_sent + client->response_timeout) {
                 resend = 1;
@@ -548,14 +574,17 @@ ssize_t win32mqtt_send(struct mqtt_client *client)
             }
         }
 
-        /* goto next message if we don't need to send */
-        if (!resend) {
+        /* Earlier messages may still count toward QoS 2 flow control, but may
+         * not interrupt a pending write. */
+        if ((pending_write >= 0 && i < pending_write) || !resend) {
             continue;
         }
 
         /* we're sending the message */
         {
-          ssize_t tmp = mqtt_pal_sendall(client->socketfd, msg->start + client->send_offset, msg->size - client->send_offset, 0);
+          ssize_t tmp;
+          msg->sending = 1;
+          tmp = mqtt_pal_sendall(client->socketfd, msg->start + client->send_offset, msg->size - client->send_offset, 0);
           if (tmp < 0) {
             client->error = (enum MQTTErrors)tmp;
             MQTT_PAL_MUTEX_UNLOCK(&client->mutex);
@@ -568,6 +597,8 @@ ssize_t win32mqtt_send(struct mqtt_client *client)
             } else {
               /* whole message has been sent */
               client->send_offset = 0;
+              msg->sending = 0;
+              pending_write = -1;
             }
 
           }
@@ -577,6 +608,10 @@ ssize_t win32mqtt_send(struct mqtt_client *client)
         /* update timeout watcher */
         client->time_of_last_send = MQTT_PAL_TIME();
         msg->time_sent = client->time_of_last_send;
+
+        /* An ACK may arrive for the previous transmission while its retry is
+         * partially written. Finish the bytes, but do not resurrect the message. */
+        if (msg->state == MQTT_QUEUED_COMPLETE) continue;
 
         /* 
         Determine the state to put the message in.
@@ -658,19 +693,20 @@ ssize_t win32mqtt_recv(struct mqtt_client *client)
         ssize_t rv, consumed;
         struct mqtt_queued_message *msg = NULL;
 
-        rv = mqtt_pal_recvall(client->socketfd, client->recv_buffer.curr, client->recv_buffer.curr_sz, 0);
-        if (rv < 0) {
-            /* an error occurred */
-            client->error = (enum MQTTErrors)rv;
-            MQTT_PAL_MUTEX_UNLOCK(&client->mutex);
-            return rv;
-        } else {
+        /* Consume buffered packets before reading again. Otherwise a following
+         * EOF can discard complete packets from the previous read. */
+        consumed = mqtt_unpack_response(&response, client->recv_buffer.mem_start, (size_t) (client->recv_buffer.curr - client->recv_buffer.mem_start));
+        if (consumed == 0) {
+            rv = mqtt_pal_recvall(client->socketfd, client->recv_buffer.curr, client->recv_buffer.curr_sz, 0);
+            if (rv < 0) {
+                client->error = (enum MQTTErrors)rv;
+                MQTT_PAL_MUTEX_UNLOCK(&client->mutex);
+                return rv;
+            }
             client->recv_buffer.curr += rv;
             client->recv_buffer.curr_sz -= (unsigned long)rv;
+            consumed = mqtt_unpack_response(&response, client->recv_buffer.mem_start, (size_t) (client->recv_buffer.curr - client->recv_buffer.mem_start));
         }
-
-        /* attempt to parse */
-        consumed = mqtt_unpack_response(&response, client->recv_buffer.mem_start, (size_t) (client->recv_buffer.curr - client->recv_buffer.mem_start));
 
         if (consumed < 0) {
             client->error = (enum MQTTErrors)consumed;
@@ -1641,6 +1677,7 @@ struct mqtt_queued_message* mqtt_mq_register(struct mqtt_message_queue *mq, size
     mq->queue_tail->start = mq->curr;
     mq->queue_tail->size = nbytes;
     mq->queue_tail->state = MQTT_QUEUED_UNSENT;
+    mq->queue_tail->sending = 0;
 
     /* move curr and recalculate curr_sz */
     mq->curr += nbytes;
@@ -1653,7 +1690,7 @@ void mqtt_mq_clean(struct mqtt_message_queue *mq) {
     struct mqtt_queued_message *new_head;
 
     for(new_head = mqtt_mq_get(mq, 0); new_head >= mq->queue_tail; --new_head) {
-        if (new_head->state != MQTT_QUEUED_COMPLETE) break;
+        if (new_head->state != MQTT_QUEUED_COMPLETE || new_head->sending) break;
     }
     
     /* check if everything can be removed */

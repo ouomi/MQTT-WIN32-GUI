@@ -34,7 +34,42 @@ if(MSVC)
     target_compile_definitions(win32mqtt_init_tests PRIVATE WIN32MQTT_TEST_MSVC=1)
 endif()
 
-foreach(test_target IN ITEMS win32mqtt_core_tests win32mqtt_publish_tests win32mqtt_init_tests)
+add_executable(win32mqtt_backpressure_tests mqtt_backpressure_tests.c ../src/mqtt/mqtt_c/mqtt.c)
+target_compile_definitions(win32mqtt_backpressure_tests PRIVATE
+    MQTT_CUSTOM_PAL_HEADER="mqtt_test_pal.h"
+    WIN32MQTT_TEST_TRACK_LOCKS=1 WIN32MQTT_TEST_CLOCK=1)
+
+add_executable(win32mqtt_socket_tests mqtt_transport_tests.c ../src/mqtt/mqtt_c/mqtt_pal.c)
+target_compile_definitions(win32mqtt_socket_tests PRIVATE MQTT_CUSTOM_PAL_HEADER="mqtt_transport_pal.h")
+
+set(transport_tests win32mqtt_backpressure_tests win32mqtt_socket_tests)
+# Native protocol tests remain available without OpenSSL. TLS application builds
+# also compile the BIO tests with the same OpenSSL selected for the application.
+if(NOT WIN32 OR WIN32MQTT_ENABLE_TLS)
+    find_package(OpenSSL QUIET)
+    if(OpenSSL_FOUND)
+        add_executable(win32mqtt_bio_tests mqtt_transport_tests.c ../src/mqtt/mqtt_c/mqtt_pal.c)
+        target_compile_definitions(win32mqtt_bio_tests PRIVATE
+            MQTT_CUSTOM_PAL_HEADER="mqtt_transport_pal.h" MQTT_USE_BIO=1)
+        target_link_libraries(win32mqtt_bio_tests PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+        list(APPEND transport_tests win32mqtt_bio_tests)
+    else()
+        message(STATUS "OpenSSL unavailable: BIO transport tests are skipped")
+    endif()
+endif()
+foreach(test_target IN LISTS transport_tests)
+    target_compile_features(${test_target} PRIVATE c_std_99)
+    target_include_directories(${test_target} PRIVATE . ../src/mqtt/mqtt_c)
+    if(MSVC)
+        target_compile_definitions(${test_target} PRIVATE WIN32MQTT_TEST_MSVC=1)
+    endif()
+    if(NOT CMAKE_CROSSCOMPILING OR CMAKE_CROSSCOMPILING_EMULATOR)
+        add_test(NAME ${test_target} COMMAND ${test_target})
+        set_tests_properties(${test_target} PROPERTIES TIMEOUT 10)
+    endif()
+endforeach()
+
+foreach(test_target IN ITEMS win32mqtt_core_tests win32mqtt_publish_tests win32mqtt_init_tests ${transport_tests})
     if(MSVC)
         target_compile_options(${test_target} PRIVATE /W4)
     else()

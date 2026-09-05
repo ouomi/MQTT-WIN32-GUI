@@ -17,7 +17,12 @@ typedef ptrdiff_t ssize_t;
 
 typedef int64_t mqtt_pal_time_t;
 typedef int mqtt_pal_mutex_t;
+#if defined(MQTT_USE_BIO)
+#include <openssl/bio.h>
+typedef BIO *mqtt_pal_socket_handle;
+#else
 typedef int mqtt_pal_socket_handle;
+#endif
 
 static inline uint16_t mqtt_test_htons(uint16_t value)
 {
@@ -36,7 +41,12 @@ static inline uint16_t mqtt_test_ntohs(uint16_t value)
 
 #define MQTT_PAL_HTONS(value) mqtt_test_htons(value)
 #define MQTT_PAL_NTOHS(value) mqtt_test_ntohs(value)
+#if defined(WIN32MQTT_TEST_CLOCK)
+extern mqtt_pal_time_t mqtt_test_time;
+#define MQTT_PAL_TIME() mqtt_test_time
+#else
 #define MQTT_PAL_TIME() ((mqtt_pal_time_t)0)
+#endif
 #if defined(WIN32MQTT_TEST_TRACK_LOCKS)
 void mqtt_test_mutex_init(mqtt_pal_mutex_t *mutex);
 void mqtt_test_mutex_lock(mqtt_pal_mutex_t *mutex);

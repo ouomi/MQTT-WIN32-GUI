@@ -101,7 +101,11 @@ typedef CRITICAL_SECTION mqtt_pal_mutex_t;
 #endif /* MQTT_CUSTOM_PAL_HEADER */
 
 /**
- * @brief Sends all the bytes in a buffer.
+ * @brief Attempts a non-blocking write; partial progress is allowed.
+ *
+ * Windows and BIO perform at most one transport call, with length capped at
+ * INT_MAX. Retry conditions yield immediately. The caller must retain the
+ * unwritten bytes; BIO retries require identical content and length.
  * @ingroup pal
  * 
  * @param[in] fd The file-descriptor (or handle) of the socket.
@@ -121,7 +125,11 @@ typedef CRITICAL_SECTION mqtt_pal_mutex_t;
 ssize_t mqtt_pal_sendall(mqtt_pal_socket_handle fd, const void* buf, size_t len, int flags);
 
 /**
- * @brief Non-blocking receive all the byte available.
+ * @brief Attempts a non-blocking read; partial progress is allowed.
+ *
+ * Windows and BIO perform at most one transport call. Zero capacity returns 0
+ * without reading. With nonzero capacity, peer closure is SOCKET_ERROR, not
+ * temporary unavailability. Buffered bytes must be consumed before another read.
  * @ingroup pal
  * 
  * @param[in] fd The file-descriptor (or handle) of the socket.

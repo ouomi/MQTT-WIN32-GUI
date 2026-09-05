@@ -22,7 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#include <mqtt.h>
+#include "mqtt.h"
 
 /** 
  * @file 
@@ -297,75 +297,46 @@ ssize_t mqtt_pal_recvall(mqtt_pal_socket_handle fd, void* buf, size_t bufsz, int
 #include <openssl/err.h>
 
 ssize_t mqtt_pal_sendall(mqtt_pal_socket_handle fd, const void* buf, size_t len, int flags) {
+    int rv;
     (void)flags;
-    size_t sent = 0;
-    while(sent < len) {
-        int tmp = BIO_write(fd, (const char*)buf + sent, (int)(len - sent));
-        if (tmp > 0) {
-            sent += (size_t) tmp;
-        } else if (tmp <= 0 && !BIO_should_retry(fd)) {
-            return MQTT_ERROR_SOCKET_ERROR;
-        }
-    }
-    
-    return (ssize_t)sent;
+    if (len == 0) return 0;
+    /* One attempt per call: WANT_READ and WANT_WRITE must yield to the worker. */
+    ERR_clear_error();
+    rv = BIO_write(fd, buf, len > INT_MAX ? INT_MAX : (int)len);
+    if (rv > 0) return rv;
+    return BIO_should_retry(fd) ? 0 : MQTT_ERROR_SOCKET_ERROR;
 }
 
 ssize_t mqtt_pal_recvall(mqtt_pal_socket_handle fd, void* buf, size_t bufsz, int flags) {
-    (void)flags;
-    const char* const start = (const char*)buf;
-    char* bufptr = (char*)buf;
     int rv;
-    do {
-        rv = BIO_read(fd, bufptr, (int)bufsz);
-        if (rv > 0) {
-            /* successfully read bytes from the socket */
-            bufptr += rv;
-            bufsz -= (unsigned long)rv;
-        } else if (!BIO_should_retry(fd)) {
-            /* an error occurred that wasn't "nothing to read". */
-            return MQTT_ERROR_SOCKET_ERROR;
-        }
-    } while (!BIO_should_read(fd) && bufsz > 0);
-
-    return (ssize_t)(bufptr - start);
+    (void)flags;
+    if (bufsz == 0) return 0;
+    ERR_clear_error();
+    rv = BIO_read(fd, buf, bufsz > INT_MAX ? INT_MAX : (int)bufsz);
+    if (rv > 0) return rv;
+    /* EOF is terminal; only explicit retry flags mean temporary unavailability. */
+    return BIO_should_retry(fd) ? 0 : MQTT_ERROR_SOCKET_ERROR;
 }
 
 #else /* Windows socket transport */
 
-#include <errno.h>
-
 ssize_t mqtt_pal_sendall(mqtt_pal_socket_handle fd, const void* buf, size_t len, int flags) {
-    size_t sent = 0;
-    while(sent < len) {
-        ssize_t tmp = send(fd, (char*)buf + sent, len - sent, flags);
-        if (tmp < 1) {
-            return MQTT_ERROR_SOCKET_ERROR;
-        }
-        sent += (size_t) tmp;
-    }
-    return sent;
+    int rv;
+    if (len == 0) return 0;
+    rv = send(fd, (const char*)buf, len > INT_MAX ? INT_MAX : (int)len, flags);
+    if (rv > 0) return rv;
+    if (rv == SOCKET_ERROR && WSAGetLastError() == WSAEWOULDBLOCK) return 0;
+    return MQTT_ERROR_SOCKET_ERROR;
 }
 
 ssize_t mqtt_pal_recvall(mqtt_pal_socket_handle fd, void* buf, size_t bufsz, int flags) {
-    const char *const start = buf;
-    ssize_t rv;
-    do {
-        rv = recv(fd, buf, bufsz, flags);
-        if (rv > 0) {
-            /* successfully read bytes from the socket */
-            buf = (char*)buf + rv;
-            bufsz -= rv;
-        } else if (rv < 0) {
-            int err = WSAGetLastError();
-            if (err != WSAEWOULDBLOCK) {
-                /* an error occurred that wasn't "nothing to read". */
-                return MQTT_ERROR_SOCKET_ERROR;
-            }
-        }
-    } while (rv > 0 && bufsz > 0);
-
-    return (ssize_t)((char*)buf - start);
+    int rv;
+    if (bufsz == 0) return 0;
+    rv = recv(fd, (char*)buf, bufsz > INT_MAX ? INT_MAX : (int)bufsz, flags);
+    if (rv > 0) return rv;
+    if (rv == SOCKET_ERROR && WSAGetLastError() == WSAEWOULDBLOCK) return 0;
+    /* recv == 0 means that the peer closed the connection. */
+    return MQTT_ERROR_SOCKET_ERROR;
 }
 
 #endif

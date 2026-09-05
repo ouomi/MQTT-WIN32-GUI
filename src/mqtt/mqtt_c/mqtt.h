@@ -36,7 +36,7 @@ SOFTWARE.
 #define MQTTC_STR(x) MQTTC_STR2(x)
 #include MQTTC_STR(MQTTC_PAL_FILE)
 #else
-#include <mqtt_pal.h>
+#include "mqtt_pal.h"
 #endif /* MQTT_PAL_FILE */
 
 /**
@@ -933,6 +933,10 @@ struct mqtt_queued_message {
 
     /** @brief The state of the message. */
     enum MQTTQueuedMessageState state;
+
+    /** @brief A write is in progress, including a transport retry with zero bytes sent.
+     * The message must remain queued even if its previous transmission is acknowledged. */
+    uint8_t sending;
 
     /** 
      * @brief The time at which the message was sent..

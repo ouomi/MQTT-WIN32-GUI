@@ -137,6 +137,9 @@ struct MqttSession::Impl {
             SSL* ssl = nullptr;
             if (transport != nullptr) BIO_get_ssl(transport, &ssl);
             if (transport == nullptr || ssl == nullptr || SSL_set_tlsext_host_name(ssl, endpoint.host.c_str()) != 1 || SSL_set1_host(ssl, endpoint.host.c_str()) != 1) { error = "unable to configure TLS hostname verification"; return false; }
+            // MQTT-C may compact its queue between SSL_write retries. The
+            // retried bytes and length stay identical, but their address may move.
+            SSL_set_mode(ssl, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
             BIO* socket_transport = BIO_new_socket(socket_handle, BIO_NOCLOSE);
             if (socket_transport == nullptr) { error = "unable to create TLS socket transport"; return false; }
             transport = BIO_push(transport, socket_transport);
