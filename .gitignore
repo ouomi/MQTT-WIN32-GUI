@@ -1,10 +1,18 @@
-MQTT-C/
-build/
-AI-output/
-mingw64-notls-release/
-mingw64-tls-release/
-mingw32-notls-release/
-mingw32-tls-release/
-release-artifacts/
-scripts/
-AGENTS.md
+# Generated build and distribution files.
+/build/
+/dist/
+/compile_commands.json
+/CMakeUserPresets.json
+
+# Local files and output from older build layouts.
+/MQTT-C/
+/AI-output/
+/mingw64-notls-release/
+/mingw64-tls-release/
+/mingw32-notls-release/
+/mingw32-tls-release/
+/release-artifacts/
+/build-tests/
+/build-tests-asan/
+/scripts/
+/AGENTS.md

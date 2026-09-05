@@ -1,3 +1,4 @@
+/* Protocol queue, backpressure and subscription acknowledgement regressions. */
 #include "mqtt.h"
 #include <stdio.h>
 

@@ -1,72 +1,102 @@
 {
-  "version": 6,
+  "version": 2,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
   "configurePresets": [
     {
       "name": "mingw-release-base",
       "hidden": true,
       "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
-      }
-    },
-    {
-      "name": "mingw32-tls-release",
-      "displayName": "MinGW-w64 x86 TLS Release",
-      "inherits": "mingw-release-base",
-      "binaryDir": "${sourceDir}/build/mingw32-tls-release",
-      "cacheVariables": {
-        "CMAKE_INSTALL_PREFIX": "${sourceDir}/mingw32-tls-release",
-        "CMAKE_TOOLCHAIN_FILE": "/opt/vcpkg/scripts/buildsystems/vcpkg.cmake",
-        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/mingw32.cmake",
-        "VCPKG_TARGET_TRIPLET": "x86-mingw-dynamic",
-        "WIN32MQTT_ENABLE_TLS": "ON",
-        "WIN32MQTT_OPENSSL_DYNAMIC": "ON"
-      }
-    },
-    {
-      "name": "mingw64-tls-release",
-      "displayName": "MinGW-w64 x86_64 TLS Release",
-      "inherits": "mingw-release-base",
-      "binaryDir": "${sourceDir}/build/mingw64-tls-release",
-      "cacheVariables": {
-        "CMAKE_INSTALL_PREFIX": "${sourceDir}/mingw64-tls-release",
-        "CMAKE_TOOLCHAIN_FILE": "/opt/vcpkg/scripts/buildsystems/vcpkg.cmake",
-        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/mingw64.cmake",
-        "VCPKG_TARGET_TRIPLET": "x64-mingw-dynamic",
-        "WIN32MQTT_ENABLE_TLS": "ON",
-        "WIN32MQTT_OPENSSL_DYNAMIC": "ON"
-      }
-    },
-    {
-      "name": "mingw32-notls-release",
-      "displayName": "MinGW-w64 x86 TCP-only Release",
-      "inherits": "mingw-release-base",
-      "binaryDir": "${sourceDir}/build/mingw32-notls-release",
-      "cacheVariables": {
-        "CMAKE_INSTALL_PREFIX": "${sourceDir}/mingw32-notls-release",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/mingw32.cmake",
-        "WIN32MQTT_ENABLE_TLS": "OFF",
-        "WIN32MQTT_OPENSSL_DYNAMIC": "OFF"
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/dist/${presetName}",
+        "WIN32MQTT_BUILD_APP": "ON",
+        "BUILD_TESTING": "OFF"
       }
     },
     {
       "name": "mingw64-notls-release",
-      "displayName": "MinGW-w64 x86_64 TCP-only Release",
+      "displayName": "Linux to Windows x86_64 TCP-only Release",
+      "description": "Requires the matching MinGW-w64 toolchain; no OpenSSL needed.",
       "inherits": "mingw-release-base",
-      "binaryDir": "${sourceDir}/build/mingw64-notls-release",
       "cacheVariables": {
-        "CMAKE_INSTALL_PREFIX": "${sourceDir}/mingw64-notls-release",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/mingw64.cmake",
         "WIN32MQTT_ENABLE_TLS": "OFF",
-        "WIN32MQTT_OPENSSL_DYNAMIC": "OFF"
+        "WIN32MQTT_BUNDLE_OPENSSL": "OFF",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/mingw64.cmake"
+      }
+    },
+    {
+      "name": "mingw64-tls-release",
+      "displayName": "Linux to Windows x86_64 TLS Release",
+      "description": "Requires VCPKG_ROOT and the matching MinGW OpenSSL package.",
+      "inherits": "mingw-release-base",
+      "cacheVariables": {
+        "WIN32MQTT_ENABLE_TLS": "ON",
+        "WIN32MQTT_BUNDLE_OPENSSL": "ON",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/mingw64.cmake",
+        "VCPKG_TARGET_TRIPLET": "x64-mingw-dynamic"
+      }
+    },
+    {
+      "name": "mingw32-notls-release",
+      "displayName": "Linux to Windows x86 TCP-only Release",
+      "description": "Requires the matching MinGW-w64 toolchain; no OpenSSL needed.",
+      "inherits": "mingw-release-base",
+      "cacheVariables": {
+        "WIN32MQTT_ENABLE_TLS": "OFF",
+        "WIN32MQTT_BUNDLE_OPENSSL": "OFF",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/mingw32.cmake"
+      }
+    },
+    {
+      "name": "mingw32-tls-release",
+      "displayName": "Linux to Windows x86 TLS Release",
+      "description": "Requires VCPKG_ROOT and the matching MinGW OpenSSL package.",
+      "inherits": "mingw-release-base",
+      "cacheVariables": {
+        "WIN32MQTT_ENABLE_TLS": "ON",
+        "WIN32MQTT_BUNDLE_OPENSSL": "ON",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/mingw32.cmake",
+        "VCPKG_TARGET_TRIPLET": "x86-mingw-dynamic"
+      }
+    },
+    {
+      "name": "native-tests",
+      "displayName": "Native component tests",
+      "description": "Run on Linux without a Windows toolchain or broker. OpenSSL BIO tests are optional.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "WIN32MQTT_BUILD_APP": "OFF",
+        "BUILD_TESTING": "ON"
+      }
+    },
+    {
+      "name": "native-tests-asan",
+      "displayName": "Native tests with Clang ASan and UBSan",
+      "description": "Requires Clang and its sanitizer runtimes on Linux.",
+      "inherits": "native-tests",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer"
       }
     }
   ],
   "buildPresets": [
     {
-      "name": "mingw32-tls-release",
-      "configurePreset": "mingw32-tls-release"
+      "name": "mingw64-notls-release",
+      "configurePreset": "mingw64-notls-release"
     },
     {
       "name": "mingw64-tls-release",
@@ -77,8 +107,42 @@
       "configurePreset": "mingw32-notls-release"
     },
     {
-      "name": "mingw64-notls-release",
-      "configurePreset": "mingw64-notls-release"
+      "name": "mingw32-tls-release",
+      "configurePreset": "mingw32-tls-release"
+    },
+    {
+      "name": "native-tests",
+      "configurePreset": "native-tests"
+    },
+    {
+      "name": "native-tests-asan",
+      "configurePreset": "native-tests-asan"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "native-tests",
+      "configurePreset": "native-tests",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "native-tests-asan",
+      "configurePreset": "native-tests-asan",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      },
+      "environment": {
+        "ASAN_OPTIONS": "detect_leaks=1",
+        "UBSAN_OPTIONS": "halt_on_error=1"
+      }
     }
   ]
 }

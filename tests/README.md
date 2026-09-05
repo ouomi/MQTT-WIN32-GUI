@@ -1,39 +1,92 @@
-# 核心与协议测试
+# 测试 / Tests
 
-Linux 原生构建只生成测试，不需要 Windows SDK。OpenSSL 可选；检测到后额外构建 BIO 传输测试：
+这些是开发时运行的组件与回归测试，不会安装到发布包。保留独立可执行文件以隔离不同的平台适配桩；不需要外部测试框架或 Broker。
+
+These development-time component and regression tests are never installed in the application package. Separate executables isolate different platform stubs; no external test framework or broker is required.
+
+## 运行 / Run
+
+从仓库根目录运行，Linux 需要 CMake 3.20+、Ninja 和 C/C++ 编译器：
+
+From the repository root, on Linux with CMake 3.20+, Ninja, and C/C++ compilers:
 
 ```sh
-cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-tests
-ctest --test-dir build-tests --output-on-failure
+cmake --preset native-tests
+cmake --build --preset native-tests
+ctest --preset native-tests
 ```
 
-使用 Clang 检查越界访问及未定义行为：
+安装 Clang 和 sanitizer 运行库后，可进行内存、泄漏及未定义行为检查：
+
+With Clang and its sanitizer runtimes installed, check memory safety, leaks, and undefined behavior:
 
 ```sh
-cmake -S . -B build-tests-asan \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
-  '-DCMAKE_C_FLAGS=-fsanitize=address,undefined -fno-omit-frame-pointer' \
-  '-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-omit-frame-pointer'
-cmake --build build-tests-asan
-UBSAN_OPTIONS=halt_on_error=1 ctest --test-dir build-tests-asan --output-on-failure
+cmake --preset native-tests-asan
+cmake --build --preset native-tests-asan
+ctest --preset native-tests-asan
 ```
 
-- `win32mqtt_core_modules`：URI 解析、订阅目录以及发布主题/订阅过滤器校验，覆盖通配符、UTF-8/UTF-16、空字符和编码长度边界。
-- `win32mqtt_publish_parser`：直接编译仓库内的 `mqtt.c`，验证 PUBLISH 解析边界、错误长度、各 QoS 的空 payload、二进制 payload、截断报文及连续报文。
-- `win32mqtt_initialization`：验证初始化的锁状态、CONNECT 成功与失败时的锁释放、失败后再次连接及传统 `mqtt_init` 调用约定。
-- `win32mqtt_backpressure_tests`：通过模拟时钟和可控读写，验证零进展、部分发送、超时重发顺序、重发期间收到 ACK、队列整理、重连偏移清零及 EOF 前交付所有完整报文；另外验证单轮最多处理 32 个报文，剩余缓冲数据在后续调用继续处理；验证没有订阅时 QoS 0/1/2 空 payload 的发送及报文解码；验证 SUBACK 拒绝不使连接失败、乱序确认关联、拒绝后继续收消息和再次订阅、完成后不重发、可选回调及畸形/未知 SUBACK 校验；验证 UNSUBACK 乱序关联原主题与 Packet ID、拆包、重复确认不重复通知、确认后不重发、在途 PUBLISH、可选回调及初始化/重初始化、零 ID、长度、保留位和未知确认。
-- `win32mqtt_disconnect_tests`：直接测试会话使用的 `MqttDisconnect`，验证 DISCONNECT 的实际字节、短写、零进展、续完正在发送的报文、跳过未发送队列、队列已满、不等待 QoS 确认、1 秒期限、重复请求不延长期限和传输失败。使用可控时钟，无需实际等待。
-- `win32mqtt_connect_attempt_tests`：验证 DNS/TCP/TLS/CONNACK 的期限边界、阶段切换、310 秒后仍判定超时、提前取消、取消优先于超时和不同连接请求的取消隔离。
-- `win32mqtt_dns_tests`：直接测试生产异步 DNS 包装器，以 `mqtt_dns_test_api.hpp` 注入 Windows API 结果，验证立即成功/失败、异步回调、取消后延迟回调、启动返回前回调、销毁与回调竞争、不支持取消 API 和 Winsock 启动失败。检查解析参数在取消后仍有效，地址和 Winsock 引用恰好释放一次。
-- `win32mqtt_capacity_tests`：验证命令数量与字节上限、拒绝后 FIFO 不变、断开预留位置、出队归还容量和整数溢出边界；将报文大小判断与实际 MQTT 编码比较；填满真实 MQTT-C 发送队列后验证发布/订阅/退订被拒绝但连接可继续发送，释放容量后可重试，真实网络错误不会被清除。
-- `win32mqtt_display_tests`：直接测试事件队列、窗口桥接和日志模型，覆盖条数/字节上限、状态优先与合并、溢出计数、分批取出、关闭后迟到回调、1 万条事件的并发生产/消费，以及日志淘汰、清空、截断、UTF-16 边界和空字符显示。不执行 Windows 定时器和 EDIT 控件绘制。
-- `win32mqtt_socket_tests`：直接编译生产 `mqtt_pal.c` 的 Winsock 分支，以函数桩提供短读写、WOULDBLOCK、EOF 和错误；检查单次调用及时返回、零长度不访问传输层以及长度转换上限。
-- `win32mqtt_bio_tests`（需要 OpenSSL）：直接编译生产 BIO 分支，用 OpenSSL 自定义 BIO 检查 WANT_READ/WANT_WRITE（包括返回零的重试）、短读写、EOF 和错误。另用真实 BIO pair 的有限缓冲区验证写满、读出后续写及关闭行为。
+该测试预设启用 LeakSanitizer，并让 UBSan 遇错失败。在使用 ptrace 的调试器或沙箱内，LeakSanitizer 可能无法运行；应在支持的环境中执行，环境报错不代表测试通过。
 
-协议测试使用 `mqtt_test_pal.h` 替换平台类型、锁和时钟；PUBLISH/初始化测试禁止网络调用，背压和断开测试提供可控传输。断开与连接阶段测试不执行 Windows 会话线程和窗口销毁流程。DNS 测试中的竞争由真实测试线程驱动，但不调用 Windows DNS 服务。适配层测试使用 `mqtt_transport_pal.h`，Winsock 调用被替换为桩，BIO 调用使用真实 OpenSSL 库。这些测试不验证 Windows 实际网络拥塞、DNS 服务、TLS 握手、会话线程调度或 Broker 行为。畸形报文与截断报文使用与输入长度一致的堆分配，便于 AddressSanitizer 发现越界读取。
+The sanitizer test preset enables LeakSanitizer and makes UBSan stop on errors. LeakSanitizer may not run under ptrace-based debuggers or sandboxes; run it in a supported environment rather than treating an environment error as a pass.
 
-运行 `build-tests-asan/tests/win32mqtt_init_tests --reproduce-unlocked-connect` 可复现修复前的调用顺序。预期退出码为 1，并报告 `FAIL: unlock without ownership`；此负向检查不属于正常 CTest 测试。
+OpenSSL 开发库可选：可用时运行 11 项测试，否则运行 10 项并明确跳过 BIO。若要显式验证无 OpenSSL 的构建，使用独立目录：
 
-Windows 构建默认生成十个测试目标，TLS 构建增加 BIO 测试。交叉编译时，仅在配置了 `CMAKE_CROSSCOMPILING_EMULATOR` 的情况下注册 CTest 测试，避免在宿主机直接执行 Windows 程序。
+OpenSSL development libraries are optional: 11 tests run when available, otherwise 10 run and BIO is explicitly skipped. To check a build without OpenSSL, use a separate directory:
+
+```sh
+cmake --preset native-tests -B build/tests-no-openssl -DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON
+cmake --build build/tests-no-openssl
+ctest --test-dir build/tests-no-openssl --output-on-failure
+```
+
+## 分组与覆盖 / Groups and coverage
+
+CTest 名称与可执行文件名称一致：`win32mqtt_<name>_tests`。每项测试有 10 秒超时。
+
+CTest and executable names match: `win32mqtt_<name>_tests`. Each test has a 10-second timeout.
+
+| `<name>` | 标签 / Label | 覆盖内容 / Coverage |
+| --- | --- | --- |
+| `core` | `core` | URI、订阅目录、主题和 Unicode 校验 / URI, catalog, topics, and Unicode validation |
+| `capacity` | `core` | 命令与报文上限、用户请求队列满恢复 / Command and packet bounds, user-request queue-full recovery |
+| `display` | `core` | 有界事件队列、并发消费、日志淘汰和文本截断 / Event bounds, concurrent consumption, log retention and truncation |
+| `publish` | `protocol` | PUBLISH 解析边界、畸形输入、空与二进制 payload / Parser bounds, malformed input, empty and binary payloads |
+| `init` | `protocol` | CONNECT 初始化和锁约定 / CONNECT initialization and lock ownership |
+| `protocol` | `protocol` | 短写、重试、确认、队列回收、SUBACK/UNSUBACK / Partial writes, retries, acknowledgements, queue cleanup, SUBACK/UNSUBACK |
+| `disconnect` | `connection` | 有期限的 DISCONNECT 发送器 / Bounded DISCONNECT sender |
+| `connect_attempt` | `connection` | 连接阶段期限和取消隔离 / Connection phase deadlines and cancellation isolation |
+| `dns` | `connection` | 异步解析包装器、取消后回调与资源释放 / Async DNS wrapper, late callbacks, and cleanup |
+| `socket` | `transport` | Winsock 适配器的短读写、WOULDBLOCK、EOF / Winsock adapter partial I/O, WOULDBLOCK, and EOF |
+| `bio` | `transport` | OpenSSL BIO 重试和有限缓冲区 / OpenSSL BIO retries and bounded buffers |
+
+```sh
+# 列出测试 / List tests
+ctest --preset native-tests -N
+# 只运行协议组 / Run the protocol group
+ctest --preset native-tests -L protocol
+# 只运行 DNS / Run DNS only
+ctest --preset native-tests -R '^win32mqtt_dns_tests$'
+```
+
+原 `mqtt_backpressure_tests.c` 已更名为 `mqtt_protocol_tests.c`，与其协议队列和订阅确认覆盖范围一致；原有用例保留。新增用例应验证可观察行为和故障恢复，避免仅重复实现步骤。
+
+The former `mqtt_backpressure_tests.c` is now `mqtt_protocol_tests.c`, reflecting its protocol-queue and subscription-acknowledgement coverage. Existing cases are retained. New tests should verify observable behavior and failure recovery rather than merely repeating implementation steps.
+
+## 验证边界 / Validation boundaries
+
+测试直接编译生产协议与辅助组件。`mqtt_test_pal.h` 替换平台类型、锁和时钟；`mqtt_transport_pal.h` 替换 Winsock 调用；`mqtt_dns_test_api.hpp` 注入 Windows DNS API 结果。BIO 测试使用真实 OpenSSL BIO，但不执行 TLS 握手。DNS 和显示测试中包含真实测试线程。
+
+Tests compile the production protocol and helper components. `mqtt_test_pal.h` replaces platform types, locks, and clocks; `mqtt_transport_pal.h` replaces Winsock calls; `mqtt_dns_test_api.hpp` injects Windows DNS API results. BIO tests use real OpenSSL BIOs without a TLS handshake. DNS and display tests include real test threads.
+
+目前不执行 Windows GUI、真实 DNS 服务、生产会话线程编排、TLS 握手、实际 Broker 或遗嘱集成流程。组件测试通过不等于这些运行链路已验证。
+
+The suite does not execute the Windows GUI, real DNS service, production session-thread orchestration, TLS handshakes, or real broker/Last Will integration. Passing component tests does not establish that those paths have been validated.
+
+发布预设默认 `BUILD_TESTING=OFF`。可在独立交叉编译目录中显式启用测试以验证 Windows 编译；仅在配置 `CMAKE_CROSSCOMPILING_EMULATOR` 时才注册可执行的交叉编译测试，编译成功不等于运行通过。Windows 测试运行时需保证其运行时 DLL 可被加载。
+
+Release presets default to `BUILD_TESTING=OFF`. Enable it in a separate cross-build directory to verify Windows compilation. Cross-compiled tests are registered only with `CMAKE_CROSSCOMPILING_EMULATOR`; a successful build is not a test run. Windows test execution also requires its runtime DLLs to be available.
+
+初始化测试保留负向验证入口：`build/native-tests-asan/tests/win32mqtt_init_tests --reproduce-unlocked-connect`。预期退出码为 1，并报告 `FAIL: unlock without ownership`；它不属于正常 CTest 套件。
+
+Initialization tests retain a negative check: `build/native-tests-asan/tests/win32mqtt_init_tests --reproduce-unlocked-connect`. It must exit with code 1 and report `FAIL: unlock without ownership`; it is not part of the normal CTest suite.

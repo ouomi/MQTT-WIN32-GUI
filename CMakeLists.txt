@@ -4,21 +4,31 @@ project(win32mqtt VERSION 0.1.0 LANGUAGES C CXX)
 
 include(CTest)
 
+option(WIN32MQTT_BUILD_APP "Build the Windows GUI application" ${WIN32})
 option(WIN32MQTT_ENABLE_TLS "Enable mqtts:// using OpenSSL" ON)
-option(WIN32MQTT_OPENSSL_DYNAMIC "Bundle OpenSSL DLLs beside WIN32-MQTT.exe" ON)
+option(WIN32MQTT_BUNDLE_OPENSSL "Copy and install OpenSSL runtime DLLs" OFF)
+
+if(WIN32MQTT_BUILD_APP AND NOT WIN32)
+    message(FATAL_ERROR "The GUI requires Windows or a MinGW toolchain. Use the native-tests preset to test on Linux.")
+endif()
+if(NOT WIN32MQTT_BUILD_APP AND NOT BUILD_TESTING)
+    message(FATAL_ERROR "Nothing to build: enable WIN32MQTT_BUILD_APP or BUILD_TESTING.")
+endif()
+
+# Find OpenSSL once. It is required by the TLS app and optional for native BIO tests.
+if(WIN32MQTT_BUILD_APP AND WIN32MQTT_ENABLE_TLS)
+    find_package(OpenSSL REQUIRED)
+elseif(BUILD_TESTING AND (NOT WIN32 OR WIN32MQTT_ENABLE_TLS))
+    find_package(OpenSSL QUIET)
+endif()
 
 if(BUILD_TESTING)
     add_subdirectory(tests)
 endif()
 
-if(NOT WIN32)
-    if(BUILD_TESTING)
-        message(STATUS "Building native tests only; the GUI requires Windows or MinGW.")
-        return()
-    endif()
-    message(FATAL_ERROR
-        "WIN32-MQTT is a Win32 GUI application. On Linux, enable BUILD_TESTING or use "
-        "-DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/mingw64.cmake.")
+if(NOT WIN32MQTT_BUILD_APP)
+    message(STATUS "Building tests only; the Windows GUI is disabled.")
+    return()
 endif()
 
 enable_language(RC)
@@ -47,7 +57,10 @@ add_executable(win32mqtt WIN32
     src/mqtt/mqtt_c/mqtt_pal.c
 )
 
-set_target_properties(win32mqtt PROPERTIES OUTPUT_NAME "WIN32-MQTT")
+set_target_properties(win32mqtt PROPERTIES
+    OUTPUT_NAME "WIN32-MQTT"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
 target_compile_features(win32mqtt PRIVATE c_std_99 cxx_std_17)
 target_include_directories(win32mqtt PRIVATE src/mqtt/mqtt_c)
 
@@ -62,10 +75,8 @@ if(MINGW)
 endif()
 
 if(WIN32MQTT_ENABLE_TLS)
-    find_package(OpenSSL REQUIRED)
     target_compile_definitions(win32mqtt PRIVATE MQTT_USE_BIO WIN32MQTT_ENABLE_TLS=1)
     target_link_libraries(win32mqtt PRIVATE OpenSSL::SSL OpenSSL::Crypto)
-    configure_file(resources/ca-bundle.pem ca-bundle.pem COPYONLY)
 else()
     target_compile_definitions(win32mqtt PRIVATE WIN32MQTT_ENABLE_TLS=0)
 endif()
@@ -79,30 +90,13 @@ target_link_libraries(win32mqtt PRIVATE
     uxtheme
 )
 
-install(TARGETS win32mqtt RUNTIME DESTINATION .)
-install(FILES resources/licenses/MQTT-C.txt DESTINATION LICENSES)
-if(WIN32MQTT_ENABLE_TLS)
-    install(FILES resources/ca-bundle.pem DESTINATION .)
-    install(FILES resources/licenses/OpenSSL.txt DESTINATION LICENSES)
-    if(WIN32MQTT_OPENSSL_DYNAMIC)
-        if(NOT DEFINED VCPKG_INSTALLED_DIR OR NOT DEFINED VCPKG_TARGET_TRIPLET)
-            message(FATAL_ERROR "WIN32MQTT_OPENSSL_DYNAMIC requires a vcpkg triplet.")
-        endif()
-        set(WIN32MQTT_OPENSSL_RUNTIME_DIR "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
-        file(GLOB WIN32MQTT_OPENSSL_RUNTIME_DLLS CONFIGURE_DEPENDS
-            "${WIN32MQTT_OPENSSL_RUNTIME_DIR}/libssl-*.dll"
-            "${WIN32MQTT_OPENSSL_RUNTIME_DIR}/libcrypto-*.dll")
-        list(LENGTH WIN32MQTT_OPENSSL_RUNTIME_DLLS WIN32MQTT_OPENSSL_RUNTIME_DLL_COUNT)
-        if(NOT WIN32MQTT_OPENSSL_RUNTIME_DLL_COUNT EQUAL 2)
-            message(FATAL_ERROR "Expected exactly two OpenSSL runtime DLLs in ${WIN32MQTT_OPENSSL_RUNTIME_DIR}.")
-        endif()
-        install(FILES ${WIN32MQTT_OPENSSL_RUNTIME_DLLS} DESTINATION .)
-    endif()
-endif()
-
 if(MSVC)
     target_compile_options(win32mqtt PRIVATE /W4 /permissive-)
 else()
     target_compile_options(win32mqtt PRIVATE -Wall -Wextra -Wpedantic)
-    target_link_options(win32mqtt PRIVATE -municode -static -static-libgcc -static-libstdc++)
+    if(MINGW)
+        target_link_options(win32mqtt PRIVATE -municode -static -static-libgcc -static-libstdc++)
+    endif()
 endif()
+
+include(cmake/RuntimeFiles.cmake)
