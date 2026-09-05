@@ -453,13 +453,15 @@ struct MainWindow::Impl {
         for (const auto& record : subscriptions.Snapshot()) {
             const auto topic = WideToUtf8(record.topic);
             const auto found = std::find_if(statuses.begin(), statuses.end(), [&](const auto& r) { return r.topic == topic; });
-            std::wstring text = L"未订阅 / Inactive";
+            std::wstring text(Text(language, UiText::SubscriptionInactive));
             bool absent = true;
             if (found != statuses.end()) {
                 absent = !found->actual && !found->pending && !found->desired;
-                text = !found->error.empty() ? Utf8ToWide(found->error) :
-                    found->pending ? L"等待确认 / Pending" : found->actual ? L"已确认 / Subscribed" :
-                    found->desired ? L"等待同步 / Waiting" : L"未订阅 / Inactive";
+                text = !found->error.empty()
+                    ? LocalizeSubscriptionDetail(language, Utf8ToWide(found->error))
+                    : std::wstring(Text(language, found->pending ? UiText::SubscriptionPending
+                        : found->actual ? UiText::SubscriptionConfirmed
+                        : found->desired ? UiText::SubscriptionWaiting : UiText::SubscriptionInactive));
                 text += L" [" + std::to_wstring(found->generation) + L":" + std::to_wstring(found->operation) + L"]";
             }
             subscriptions.UpdateStatus(record.topic, text, absent);
@@ -488,11 +490,15 @@ struct MainWindow::Impl {
                 ApplySubscriptionChanges({});
                 break;
             case MqttConnectionState::Failed:
-                messages.Append(L"[MQTT] " + Utf8ToWide(event->detail));
+                messages.Append(LocalizeSubscriptionDetail(language, Utf8ToWide(event->detail)),
+                                L"generation=" + std::to_wstring(event->generation) +
+                                L" operation=" + std::to_wstring(event->operation));
                 break;
             case MqttConnectionState::Disconnected:
                 messages.Append(std::wstring(Text(language, UiText::DisconnectedMessage)));
-                if (!event->detail.empty()) messages.Append(L"[MQTT] " + Utf8ToWide(event->detail));
+                if (!event->detail.empty()) messages.Append(LocalizeSubscriptionDetail(language, Utf8ToWide(event->detail)),
+                                L"generation=" + std::to_wstring(event->generation) +
+                                L" operation=" + std::to_wstring(event->operation));
                 break;
             case MqttConnectionState::Disconnecting:
                 break;
@@ -500,18 +506,13 @@ struct MainWindow::Impl {
         } else if (event->type == MqttEventType::MessageReceived) {
             messages.Receive(*event, Utf8ToWide(event->topic), Utf8ToWide(event->payload));
         } else if (event->type == MqttEventType::PublishQueued) {
-            messages.Append(L"[" + std::to_wstring(event->generation) + L":" + std::to_wstring(event->operation) + L"] " +
-                            std::wstring(Text(language, UiText::PublishQueued)) +
-                            L"QoS " +
-                            std::to_wstring(static_cast<int>(event->publish_qos)) +
-                            L" -> " + Utf8ToWide(event->topic) + L": " +
-                            Utf8ToWide(event->payload));
+            messages.Publish(*event, Utf8ToWide(event->topic), Utf8ToWide(event->payload));
         } else if (event->type == MqttEventType::PublishRejected) {
-            messages.Append(L"[" + std::to_wstring(event->generation) + L":" + std::to_wstring(event->operation) + L"] " +
-                            std::wstring(Text(language, UiText::PublishRejected)) +
-                            Utf8ToWide(event->detail));
+            messages.Publish(*event, Utf8ToWide(event->topic), Utf8ToWide(event->detail));
         } else {
-            messages.Append(L"[MQTT] " + Utf8ToWide(event->detail));
+            messages.Append(LocalizeSubscriptionDetail(language, Utf8ToWide(event->detail)),
+                                L"generation=" + std::to_wstring(event->generation) +
+                                L" operation=" + std::to_wstring(event->operation));
         }
     }
 

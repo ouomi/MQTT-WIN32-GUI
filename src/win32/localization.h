@@ -1,5 +1,6 @@
 #pragma once
 
+#include <string>
 #include <string_view>
 
 namespace win32mqtt {
@@ -48,6 +49,12 @@ enum class UiText {
     DeleteSelectedSubscriptions,
     SubscriptionMessages,
     ClearMessages,
+    SubscriptionSyncStatus,
+    SubscriptionInactive,
+    SubscriptionPending,
+    SubscriptionConfirmed,
+    SubscriptionWaiting,
+    SubscriptionRemoving,
     Message,
     DefaultPayload,
     PublishTo,
@@ -64,6 +71,8 @@ enum class UiText {
     MqttSessionStopped,
     MqttEventsDropped,
 };
+
+std::wstring LocalizeSubscriptionDetail(AppLanguage language, std::wstring_view detail);
 
 AppLanguage DefaultAppLanguage();
 std::wstring_view Text(AppLanguage language, UiText text);

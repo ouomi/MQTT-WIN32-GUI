@@ -6,11 +6,15 @@
 namespace win32mqtt {
 
 // Limits are wchar_t units (UTF-16 units on Windows), including line endings.
-class MessageLog {
+template<std::size_t RecordLimit = 1000, std::size_t CharacterLimit = 256 * 1024,
+         std::size_t RecordCharacterLimit = 8192>
+class BoundedMessageLog {
 public:
-    static constexpr std::size_t MaxRecords = 1000;
-    static constexpr std::size_t MaxCharacters = 256 * 1024;
-    static constexpr std::size_t MaxRecordCharacters = 8192;
+    static constexpr std::size_t MaxRecords = RecordLimit;
+    static constexpr std::size_t MaxCharacters = CharacterLimit;
+    static constexpr std::size_t MaxRecordCharacters = RecordCharacterLimit;
+    static_assert(RecordLimit > 0 && RecordCharacterLimit >= 3 &&
+                  RecordCharacterLimit <= CharacterLimit);
     void Append(const std::wstring& message) {
         auto line = message.substr(0, MaxRecordCharacters - 2);
         if (message.size() > line.size()) {
@@ -41,5 +45,7 @@ private:
     std::deque<std::wstring> records_;
     std::size_t characters_ = 0;
 };
+
+using MessageLog = BoundedMessageLog<>;
 
 } // namespace win32mqtt

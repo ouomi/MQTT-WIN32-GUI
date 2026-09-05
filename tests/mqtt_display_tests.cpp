@@ -1,5 +1,6 @@
 #include "mqtt/mqtt_event_queue.hpp"
 #include "message_log.hpp"
+#include "message_history.hpp"
 #include "mqtt/mqtt_message_store.hpp"
 #include "win32/mqtt_window_bridge.h"
 
@@ -105,6 +106,40 @@ static void TestLog() {
     Check(log.Text() == std::wstring(8188, L'x') + L"\u2026\r\n", "truncate without splitting UTF-16 pair");
 }
 int main() {
+    MessageHistory history;
+    history.Append(L"收", L"[topic] first", L"QoS=1", L"Payload HEX: 00 FF");
+    const auto compact = history.Text();
+    Check(compact == L"[收] [topic] first\r\n", "compact keeps direction topic and content");
+    history.ToggleDetails();
+    Check(history.Text() == compact, "details toggle leaves existing records unchanged");
+    history.Append(L"发", L"Queued [topic] second", L"QoS=2");
+    const auto mixed = history.Text();
+    Check(mixed == compact + L"[发] [QoS=2] Queued [topic] second\r\n",
+          "only new records receive detailed metadata");
+    history.ToggleDetails();
+    history.ToggleHex();
+    Check(history.Detailed() && history.Text().find(L"[QoS=1] Payload HEX: 00 FF") != std::wstring::npos,
+          "HEX always includes metadata and raw payload");
+    history.ToggleDetails();
+    Check(history.Detailed(), "details cannot be disabled in HEX");
+    history.Append(L"系统", L"Disconnected", L"generation=2");
+    Check(history.Text().find(L"[系统] [generation=2] Disconnected") != std::wstring::npos,
+          "HEX retains system messages in the same format");
+    history.ToggleHex();
+    Check(!history.Detailed(), "leaving HEX restores previous compact preference");
+    Check(history.Text() == mixed + L"[系统] [generation=2] Disconnected\r\n",
+          "messages arriving in HEX remain detailed in text history");
+    history.Append(L"收", L"third", L"QoS=0");
+    Check(history.Text().find(L"[收] third\r\n") != std::wstring::npos,
+          "new arrivals use restored compact mode");
+    history.Clear();
+    Check(history.Text().empty(), "clear removes text history");
+    history.ToggleHex();
+    Check(history.Text().empty(), "clear also removes HEX history");
+    const std::wstring large_hex(30000, L'A');
+    history.Append(L"收", L"large", L"bytes=10000", large_hex);
+    Check(history.Text().find(large_hex) != std::wstring::npos,
+          "HEX payload is not truncated to the text record limit");
     MqttMessageStore raw;
     auto binary = Message(std::string("\0\xff", 2));
     binary.retain = true; binary.dup = true; binary.packet_id = 42;

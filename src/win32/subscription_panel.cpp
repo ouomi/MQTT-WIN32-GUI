@@ -41,7 +41,7 @@ void SubscriptionPanel::Create(HWND parent, AppLanguage language,
     topic_column.pszText = const_cast<LPWSTR>(Text(language, UiText::Topic).data());
     topic_column.cx = 340;
     ListView_InsertColumn(list_, 0, &topic_column);
-    topic_column.pszText = const_cast<LPWSTR>(L"Broker / 同步状态");
+    topic_column.pszText = const_cast<LPWSTR>(Text(language, UiText::SubscriptionSyncStatus).data());
     topic_column.cx = 280;
     ListView_InsertColumn(list_, 1, &topic_column);
 
@@ -253,7 +253,7 @@ void SubscriptionPanel::RemoveSelected(AppLanguage language,
         ListView_SetCheckState(list_, index, FALSE);
         restoring_ = false;
         changes.active_topics_changed = true;
-        ListView_SetItemText(list_, index, 1, const_cast<LPWSTR>(L"等待退订 / Removing"));
+        ListView_SetItemText(list_, index, 1, const_cast<LPWSTR>(Text(language, UiText::SubscriptionRemoving).data()));
     }
     ListView_SetColumnWidth(list_, 0, LVSCW_AUTOSIZE_USEHEADER);
 }
