@@ -59,8 +59,14 @@ TCP-only distribution directories contain `WIN32-MQTT.exe` and `LICENSES/`, have
 - An optional Last Will topic and payload can be configured before connecting
 - Publish to an independently entered topic without subscribing first; concrete active subscriptions are optional suggestions, and changing subscriptions preserves the typed destination
 - Published UTF-8 messages support QoS 0, 1, and 2, including empty payloads
-- Publish and Last Will topics reject wildcards; subscription filters allow whole-level `+` and final-level `#`. Topics must be valid UTF-8 without null characters and fit the 65535-byte MQTT string limit (the current packet buffer imposes a smaller overall send limit)
+- Publish and Last Will topics reject wildcards; subscription filters allow whole-level `+` and final-level `#`. Topics must be valid UTF-8 without null characters and fit the 65535-byte MQTT string limit (the application imposes the smaller packet limit below)
 - Received MQTT messages and connection errors appear in the event log
 - `mqtts://` requires TLS 1.2 or newer, certificate-chain validation, SNI, and hostname validation
+
+Outgoing CONNECT/PUBLISH/SUBSCRIBE/UNSUBSCRIBE packets are limited to **4096 encoded bytes**, including headers and string length fields. Incoming packets are limited to **8192 encoded bytes**; a larger packet closes the connection with an explicit receive-limit error. Connection host names are limited to 1024 UTF-8 bytes.
+
+The waiting command queue holds at most **256 ordinary commands and 1 MiB of string content**, plus one reserved Disconnect entry. The worker takes at most 32 commands per batch, so a bounded batch can also be in progress outside the waiting queue. Stop bypasses admission. Repeated pending Disconnect requests share the reserved entry. Rejected replacement connections do not cancel the previously accepted attempt.
+
+Admission is reported immediately to the caller and in the UI log: accepted, queue full, too large, or session stopped. Acceptance only means queued locally. When the MQTT send buffer is temporarily full, the current user operation is rejected with a retry message while the connection and previously queued packets are retained. Subscription checkboxes still represent desired state; broker acknowledgement and rejection display, bounded UI event delivery, and log retention are pending follow-up work.
 
 The CA bundle is sourced from curl's Mozilla certificate extraction. Refresh it periodically and keep its header and attribution intact.

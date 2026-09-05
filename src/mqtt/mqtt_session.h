@@ -12,6 +12,8 @@ namespace win32mqtt {
 enum class MqttConnectionState { Disconnected, Connecting, Connected, Disconnecting, Failed };
 enum class MqttEventType { StateChanged, MessageReceived, PublishQueued, PublishRejected, Log };
 enum class MqttPublishQos { Qos0, Qos1, Qos2 };
+// Admission only; Accepted does not mean sent or acknowledged by the broker.
+enum class MqttAdmission { Accepted, QueueFull, TooLarge, Stopped };
 
 struct MqttLastWill {
     std::string topic;
@@ -37,12 +39,12 @@ public:
     MqttSession(const MqttSession&) = delete;
     MqttSession& operator=(const MqttSession&) = delete;
 
-    void Connect(MqttEndpoint endpoint, std::string client_id,
+    MqttAdmission Connect(MqttEndpoint endpoint, std::string client_id,
                  std::optional<MqttLastWill> last_will = std::nullopt);
     void Disconnect();
-    void Subscribe(std::string topic);
-    void Unsubscribe(std::string topic);
-    void Publish(std::string topic, std::string payload, MqttPublishQos qos);
+    MqttAdmission Subscribe(std::string topic);
+    MqttAdmission Unsubscribe(std::string topic);
+    MqttAdmission Publish(std::string topic, std::string payload, MqttPublishQos qos);
     void Stop();
 
 private:

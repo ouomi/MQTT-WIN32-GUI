@@ -48,6 +48,12 @@ target_include_directories(win32mqtt_disconnect_tests PRIVATE ../src)
 target_compile_definitions(win32mqtt_disconnect_tests PRIVATE
     MQTT_CUSTOM_PAL_HEADER="mqtt_test_pal.h" WIN32MQTT_TEST_TRACK_LOCKS=1)
 
+add_executable(win32mqtt_capacity_tests mqtt_capacity_tests.cpp ../src/mqtt/mqtt_c/mqtt.c)
+target_compile_features(win32mqtt_capacity_tests PRIVATE cxx_std_17)
+target_include_directories(win32mqtt_capacity_tests PRIVATE ../src)
+target_compile_definitions(win32mqtt_capacity_tests PRIVATE
+    MQTT_CUSTOM_PAL_HEADER="mqtt_test_pal.h" WIN32MQTT_TEST_TRACK_LOCKS=1)
+
 add_executable(win32mqtt_connect_attempt_tests mqtt_connect_attempt_tests.cpp)
 add_executable(win32mqtt_dns_tests mqtt_dns_tests.cpp)
 target_compile_definitions(win32mqtt_dns_tests PRIVATE WIN32MQTT_DNS_TEST_API=1)
@@ -59,7 +65,7 @@ foreach(test_target IN ITEMS win32mqtt_connect_attempt_tests win32mqtt_dns_tests
 endforeach()
 
 set(transport_tests win32mqtt_backpressure_tests win32mqtt_socket_tests win32mqtt_disconnect_tests
-    win32mqtt_connect_attempt_tests win32mqtt_dns_tests)
+    win32mqtt_connect_attempt_tests win32mqtt_dns_tests win32mqtt_capacity_tests)
 # Native protocol tests remain available without OpenSSL. TLS application builds
 # also compile the BIO tests with the same OpenSSL selected for the application.
 if(NOT WIN32 OR WIN32MQTT_ENABLE_TLS)

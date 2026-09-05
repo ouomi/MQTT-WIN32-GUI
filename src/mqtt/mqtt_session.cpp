@@ -1,4 +1,6 @@
 #include "mqtt_session.h"
+#include "mqtt_capacity.hpp"
+#include "mqtt_request.hpp"
 #include "mqtt_topic.hpp"
 #include "mqtt_disconnect.hpp"
 #include "mqtt_connect_attempt.hpp"
@@ -67,18 +69,43 @@ struct MqttSession::Impl {
     }
     ~Impl() { Stop(); }
 
-    void Enqueue(Command command) {
+    MqttAdmission Enqueue(Command command) {
+        const bool disconnecting = command.type == CommandType::Disconnect;
+        const bool connecting = command.type == CommandType::Connect;
+        if (!disconnecting) {
+            bool fits;
+            if (connecting) {
+                fits = command.endpoint.host.size() <= 1024 && command.endpoint.port.size() <= 5 &&
+                    MqttPacketFits({10, 2, command.first.size(), command.last_will ? 4u : 0u,
+                        command.last_will ? command.last_will->topic.size() : 0u,
+                        command.last_will ? command.last_will->payload.size() : 0u});
+            } else if (command.type == CommandType::Publish) {
+                fits = MqttPacketFits({2, command.first.size(), command.second.size(),
+                    command.qos == MqttPublishQos::Qos0 ? 0u : 2u});
+            } else {
+                fits = MqttPacketFits({4, command.first.size(), command.type == CommandType::Subscribe ? 1u : 0u});
+            }
+            if (!fits) return MqttAdmission::TooLarge;
+        }
+        // All string lengths were bounded above, so this addition cannot overflow.
+        const auto bytes = command.first.size() + command.second.size() + command.endpoint.host.size() +
+            command.endpoint.port.size() + (command.last_will ? command.last_will->topic.size() + command.last_will->payload.size() : 0);
         { std::lock_guard<std::mutex> lock(mutex);
-          if (stopped.load()) return;
-          if (command.type == CommandType::Connect) {
+          if (stopped.load()) return MqttAdmission::Stopped;
+          if (disconnecting) {
               if (latest_connect) latest_connect->cancelled.store(true);
-              command.cancellation = std::make_shared<MqttConnectCancellation>();
-              latest_connect = command.cancellation;
-          } else if (command.type == CommandType::Disconnect && latest_connect) {
-              latest_connect->cancelled.store(true);
+              if (commands.ControlPending()) return MqttAdmission::Accepted;
           }
-          commands.push_back(std::move(command)); }
+          auto cancellation = connecting ? std::make_shared<MqttConnectCancellation>() : nullptr;
+          command.cancellation = cancellation;
+          if (!commands.Push(std::move(command), bytes, disconnecting)) return MqttAdmission::QueueFull;
+          // Rejected replacement connections must not cancel the accepted request.
+          if (connecting) {
+              if (latest_connect) latest_connect->cancelled.store(true);
+              latest_connect = std::move(cancellation);
+          } }
         wake.notify_one();
+        return MqttAdmission::Accepted;
     }
     void Stop() {
         if (!stopped.exchange(true)) {
@@ -302,7 +329,11 @@ struct MqttSession::Impl {
         if (!CheckConnecting()) return;
         const enum MQTTErrors result = mqtt_sync(&client);
         if (!CheckConnecting()) return;
-        if (result != MQTT_OK || client.error != MQTT_OK) { Fail(mqtt_error_str(result != MQTT_OK ? result : client.error)); return; }
+        if (result != MQTT_OK || client.error != MQTT_OK) {
+            const auto error = result != MQTT_OK ? result : client.error;
+            Fail(error == MQTT_ERROR_RECV_BUFFER_TOO_SMALL ? "incoming MQTT packet exceeds 8192-byte receive limit" : mqtt_error_str(error));
+            return;
+        }
         if (awaiting_connack && mqtt_mq_find(&client.mq, MQTT_CONTROL_CONNECT, nullptr) == nullptr) {
             awaiting_connack = false; state = MqttConnectionState::Connected; Emit(MqttEventType::StateChanged, state);
         }
@@ -327,8 +358,21 @@ struct MqttSession::Impl {
             next_connect.reset();
             BeginDisconnect();
             break;
-        case CommandType::Subscribe: if (state == MqttConnectionState::Connected) mqtt_subscribe(&client, command.first.c_str(), 0); break;
-        case CommandType::Unsubscribe: if (state == MqttConnectionState::Connected) mqtt_unsubscribe(&client, command.first.c_str()); break;
+        case CommandType::Subscribe:
+        case CommandType::Unsubscribe: {
+            if (state != MqttConnectionState::Connected) {
+                Emit(MqttEventType::Log, state, "subscription operation rejected: not connected");
+                break;
+            }
+            const auto result = MqttUserRequest(client, [&] {
+                return command.type == CommandType::Subscribe ? mqtt_subscribe(&client, command.first.c_str(), 0)
+                    : mqtt_unsubscribe(&client, command.first.c_str());
+            });
+            if (result != MQTT_OK) Emit(MqttEventType::Log, state,
+                command.first + ": " + (result == MQTT_ERROR_SEND_BUFFER_IS_FULL ?
+                    "subscription operation rejected: send queue full; retry later" : mqtt_error_str(result)));
+            break;
+        }
         case CommandType::Publish: {
             if (!IsValidPublishTopic(command.first)) {
                 Emit(MqttEventType::PublishRejected, state, "invalid MQTT publish topic",
@@ -340,11 +384,13 @@ struct MqttSession::Impl {
                      std::move(command.second), command.qos);
                 break;
             }
-            const enum MQTTErrors result = mqtt_publish(&client, command.first.c_str(),
-                                                        command.second.data(), command.second.size(),
-                                                        PublishFlags(command.qos));
+            const auto result = MqttUserRequest(client, [&] {
+                return mqtt_publish(&client, command.first.c_str(), command.second.data(),
+                                    command.second.size(), PublishFlags(command.qos));
+            });
             if (result != MQTT_OK) {
-                Emit(MqttEventType::PublishRejected, state, mqtt_error_str(result),
+                Emit(MqttEventType::PublishRejected, state,
+                     result == MQTT_ERROR_SEND_BUFFER_IS_FULL ? "send queue full; retry later" : mqtt_error_str(result),
                      std::move(command.first), std::move(command.second), command.qos);
                 break;
             }
@@ -361,11 +407,10 @@ struct MqttSession::Impl {
             std::deque<Command> pending;
             { std::unique_lock<std::mutex> lock(mutex);
               wake.wait_for(lock, std::chrono::milliseconds(25), [this] {
-                  return !commands.empty() || (stopped.load() && !stopping);
+                  return !commands.Empty() || (stopped.load() && !stopping);
               });
-              for (unsigned count = 0; count < 32 && !commands.empty(); ++count) {
-                  pending.push_back(std::move(commands.front()));
-                  commands.pop_front();
+              for (unsigned count = 0; count < 32 && !commands.Empty(); ++count) {
+                  pending.push_back(commands.Pop());
               } }
             for (Command& command : pending) {
                 if (stopped.load()) break;
@@ -390,7 +435,7 @@ struct MqttSession::Impl {
         WSACleanup();
     }
 
-    EventHandler handler; std::mutex mutex; std::condition_variable wake; std::deque<Command> commands; std::thread worker;
+    EventHandler handler; std::mutex mutex; std::condition_variable wake; MqttCommandQueue<Command> commands; std::thread worker;
     MqttConnectAttempt connect_attempt;
     MqttConnectAttempt::Cancellation latest_connect; // Protected by mutex.
     std::atomic<bool> stopped{false}; bool stopping = false; bool awaiting_connack = false; bool client_initialized = false;
@@ -402,30 +447,31 @@ struct MqttSession::Impl {
     SSL_CTX* ssl_context = nullptr;
 #endif
     MqttConnectionState state = MqttConnectionState::Disconnected; struct mqtt_client client{};
-    std::array<std::uint8_t, 8192> send_buffer{}; std::array<std::uint8_t, 8192> recv_buffer{};
+    alignas(mqtt_queued_message) std::array<std::uint8_t, 8192> send_buffer{};
+    std::array<std::uint8_t, MqttReceiveCapacity> recv_buffer{};
 };
 
 MqttSession::MqttSession(EventHandler handler) : impl_(std::make_unique<Impl>(std::move(handler))) {}
 MqttSession::~MqttSession() = default;
-void MqttSession::Connect(MqttEndpoint endpoint, std::string client_id,
+MqttAdmission MqttSession::Connect(MqttEndpoint endpoint, std::string client_id,
                           std::optional<MqttLastWill> last_will) {
-    impl_->Enqueue({Impl::CommandType::Connect, std::move(endpoint), std::move(client_id), {},
+    return impl_->Enqueue({Impl::CommandType::Connect, std::move(endpoint), std::move(client_id), {},
                     MqttPublishQos::Qos0, std::move(last_will)});
 }
 void MqttSession::Disconnect() {
     impl_->Enqueue({Impl::CommandType::Disconnect, {}, {}, {}, MqttPublishQos::Qos0,
                     std::nullopt});
 }
-void MqttSession::Subscribe(std::string topic) {
-    impl_->Enqueue({Impl::CommandType::Subscribe, {}, std::move(topic), {},
+MqttAdmission MqttSession::Subscribe(std::string topic) {
+    return impl_->Enqueue({Impl::CommandType::Subscribe, {}, std::move(topic), {},
                     MqttPublishQos::Qos0, std::nullopt});
 }
-void MqttSession::Unsubscribe(std::string topic) {
-    impl_->Enqueue({Impl::CommandType::Unsubscribe, {}, std::move(topic), {},
+MqttAdmission MqttSession::Unsubscribe(std::string topic) {
+    return impl_->Enqueue({Impl::CommandType::Unsubscribe, {}, std::move(topic), {},
                     MqttPublishQos::Qos0, std::nullopt});
 }
-void MqttSession::Publish(std::string topic, std::string payload, MqttPublishQos qos) {
-    impl_->Enqueue({Impl::CommandType::Publish, {}, std::move(topic), std::move(payload), qos,
+MqttAdmission MqttSession::Publish(std::string topic, std::string payload, MqttPublishQos qos) {
+    return impl_->Enqueue({Impl::CommandType::Publish, {}, std::move(topic), std::move(payload), qos,
                     std::nullopt});
 }
 void MqttSession::Stop() { impl_->Stop(); }

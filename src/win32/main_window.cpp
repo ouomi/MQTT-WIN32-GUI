@@ -274,12 +274,21 @@ struct MainWindow::Impl {
         }
     }
 
+    bool ReportAdmission(MqttAdmission result) {
+        if (result == MqttAdmission::Accepted) return true;
+        UiText text = UiText::MqttSessionStopped;
+        if (result == MqttAdmission::TooLarge) text = UiText::MqttRequestTooLarge;
+        else if (result == MqttAdmission::QueueFull) text = UiText::MqttCommandQueueFull;
+        messages.Append(std::wstring(Text(language, text)));
+        return false;
+    }
+
     void ApplySubscriptionChanges(SubscriptionPanelChanges changes) {
         for (const std::wstring& topic : changes.subscribe_topics) {
-            mqtt->Subscribe(WideToUtf8(topic));
+            ReportAdmission(mqtt->Subscribe(WideToUtf8(topic)));
         }
         for (const std::wstring& topic : changes.unsubscribe_topics) {
-            mqtt->Unsubscribe(WideToUtf8(topic));
+            ReportAdmission(mqtt->Unsubscribe(WideToUtf8(topic)));
         }
         for (const std::wstring& message : changes.messages) {
             messages.Append(message);
@@ -328,9 +337,10 @@ struct MainWindow::Impl {
             last_will = MqttLastWill{will_topic, WideToUtf8(will_settings.payload)};
         }
 
-        connection_state = MqttConnectionState::Connecting;
-        UpdateConnectionUi();
-        mqtt->Connect(parsed.endpoint, WideToUtf8(request.client_id), std::move(last_will));
+        if (ReportAdmission(mqtt->Connect(parsed.endpoint, WideToUtf8(request.client_id), std::move(last_will)))) {
+            connection_state = MqttConnectionState::Connecting;
+            UpdateConnectionUi();
+        }
     }
 
     void HandlePublishRequest(const PublishPanelRequest& request) {
@@ -341,8 +351,8 @@ struct MainWindow::Impl {
             messages.Append(std::wstring(Text(language, UiText::PublishUnavailable)));
             return;
         }
-        mqtt->Publish(WideToUtf8(request.topic), WideToUtf8(request.payload),
-                      ToMqttPublishQos(request.qos));
+        ReportAdmission(mqtt->Publish(WideToUtf8(request.topic), WideToUtf8(request.payload),
+                                     ToMqttPublishQos(request.qos)));
     }
 
     void HandleMqttEvent(LPARAM event_parameter) {
@@ -358,7 +368,7 @@ struct MainWindow::Impl {
             case MqttConnectionState::Connected:
                 messages.Append(std::wstring(Text(language, UiText::ConnectedStatus)));
                 for (const std::wstring& topic : subscriptions.ActiveTopics()) {
-                    mqtt->Subscribe(WideToUtf8(topic));
+                    ReportAdmission(mqtt->Subscribe(WideToUtf8(topic)));
                 }
                 break;
             case MqttConnectionState::Failed:

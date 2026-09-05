@@ -59,6 +59,9 @@ enum class UiText {
     SelectPublishTopic,
     InvalidPublishTopic,
     InvalidSubscriptionFilter,
+    MqttRequestTooLarge,
+    MqttCommandQueueFull,
+    MqttSessionStopped,
 };
 
 AppLanguage DefaultAppLanguage();

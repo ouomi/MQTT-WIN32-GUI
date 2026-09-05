@@ -56,6 +56,9 @@ std::wstring_view Text(AppLanguage language, UiText text) {
         case UiText::PublishTo: return L"发布到：";
         case UiText::PublishQos: return L"QoS：";
         case UiText::Publish: return L"发布";
+        case UiText::MqttRequestTooLarge: return L"[系统] 操作被拒绝：发送报文上限为 4096 字节（含主题、内容和协议头）；连接主机名上限为 1024 字节。";
+        case UiText::MqttCommandQueueFull: return L"[系统] 操作被拒绝：命令队列已满（256 条或 1 MiB），请稍后重试。";
+        case UiText::MqttSessionStopped: return L"[系统] 操作被拒绝：会话已停止。";
         case UiText::PublishUnavailable: return L"[系统] 未发布：当前未连接到 Broker。";
         case UiText::PublishQueued: return L"[系统] 已加入本地发送队列：";
         case UiText::PublishRejected: return L"[系统] 未发布：";
@@ -109,6 +112,9 @@ std::wstring_view Text(AppLanguage language, UiText text) {
     case UiText::PublishTo: return L"Publish to:";
     case UiText::PublishQos: return L"QoS:";
     case UiText::Publish: return L"Publish";
+    case UiText::MqttRequestTooLarge: return L"[system] Request rejected: outgoing packet limit is 4096 bytes including topic, payload and headers; connection host limit is 1024 bytes.";
+    case UiText::MqttCommandQueueFull: return L"[system] Request rejected: command queue full (256 commands or 1 MiB); retry later.";
+    case UiText::MqttSessionStopped: return L"[system] Request rejected: session stopped.";
     case UiText::PublishUnavailable: return L"[system] Not published: not connected to the broker.";
     case UiText::PublishQueued: return L"[system] Added to the local send queue: ";
     case UiText::PublishRejected: return L"[system] Not published: ";
