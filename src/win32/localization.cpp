@@ -50,6 +50,10 @@ std::wstring_view Text(AppLanguage language, UiText text) {
         case UiText::EnableLastWill: return L"启用遗嘱消息";
         case UiText::LastWillTopic: return L"遗嘱主题：";
         case UiText::LastWillPayload: return L"遗嘱内容：";
+        case UiText::LastWillHint: return L"连接时提交给服务器，异常掉线后由服务器发送。连接期间无法修改配置。";
+        case UiText::LastWillTest: return L"模拟异常掉线";
+        case UiText::LastWillTestHint: return L"将中断当前连接。请先用另一个客户端订阅遗嘱主题，观察是否收到消息。";
+        case UiText::LastWillTestCompleted: return L"已断开 TCP 连接，模拟异常掉线。";
         case UiText::LastWillTopicRequired: return L"启用遗嘱消息时，请输入遗嘱主题。";
         case UiText::Connect: return L"连接";
         case UiText::Disconnect: return L"断开连接";
@@ -113,6 +117,10 @@ std::wstring_view Text(AppLanguage language, UiText text) {
     case UiText::EnableLastWill: return L"Enable Last Will";
     case UiText::LastWillTopic: return L"Last Will topic:";
     case UiText::LastWillPayload: return L"Last Will message:";
+    case UiText::LastWillHint: return L"Sent to the server when connecting; published by the server after an abnormal disconnect. Settings are locked while connected.";
+    case UiText::LastWillTest: return L"Simulate abnormal disconnect";
+    case UiText::LastWillTestHint: return L"This closes the current connection. First subscribe to the Last Will topic in another client to observe the message.";
+    case UiText::LastWillTestCompleted: return L"TCP connection closed to simulate an abnormal disconnect.";
     case UiText::LastWillTopicRequired: return L"Enter a Last Will topic when Last Will is enabled.";
     case UiText::Connect: return L"Connect";
     case UiText::Disconnect: return L"Disconnect";

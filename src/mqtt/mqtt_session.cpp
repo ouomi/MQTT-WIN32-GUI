@@ -54,7 +54,7 @@ std::string ExecutableDirectoryUtf8() {
 } // namespace
 
 struct MqttSession::Impl {
-    enum class CommandType { Connect, Disconnect, Publish };
+    enum class CommandType { Connect, Disconnect, Abort, Publish };
     struct Command {
         CommandType type;
         MqttEndpoint endpoint;
@@ -74,7 +74,7 @@ struct MqttSession::Impl {
     ~Impl() { Stop(); }
 
     MqttAdmission Enqueue(Command command) {
-        const bool disconnecting = command.type == CommandType::Disconnect;
+        const bool disconnecting = command.type == CommandType::Disconnect || command.type == CommandType::Abort;
         const bool connecting = command.type == CommandType::Connect;
         if (!disconnecting) {
             bool fits;
@@ -125,7 +125,7 @@ struct MqttSession::Impl {
     }
     void Emit(MqttEventType type, MqttConnectionState next_state, std::string detail = {},
               std::string topic = {}, std::string payload = {},
-              MqttPublishQos publish_qos = MqttPublishQos::Qos0) {
+              MqttPublishQos publish_qos = MqttPublishQos::Qos0, bool simulated_disconnect = false) {
         if (type == MqttEventType::PublishQueued || type == MqttEventType::PublishRejected) {
             std::lock_guard<std::mutex> lock(mutex);
             publish_results.push_back(MqttEvent{type, next_state, std::move(detail), std::move(topic),
@@ -134,7 +134,8 @@ struct MqttSession::Impl {
         }
         if (handler) {
             handler(MqttEvent{type, next_state, std::move(detail), std::move(topic),
-                              std::move(payload), publish_qos, false, false, 0, generation, ++event_id});
+                              std::move(payload), publish_qos, false, false, 0, generation, ++event_id,
+                              0, simulated_disconnect});
         }
     }
     static void Published(void** state, struct mqtt_response_publish* published) {
@@ -360,11 +361,11 @@ struct MqttSession::Impl {
         connect_attempt.Enter(MqttConnectAttempt::Phase::Connack, Now());
         awaiting_connack = true;
     }
-    void FinishDisconnect(std::string detail = {}) {
+    void FinishDisconnect(std::string detail = {}, bool simulated = false) {
         CloseSocket();
         awaiting_connack = false;
         state = MqttConnectionState::Disconnected;
-        Emit(MqttEventType::StateChanged, state, std::move(detail));
+        Emit(MqttEventType::StateChanged, state, std::move(detail), {}, {}, MqttPublishQos::Qos0, simulated);
     }
     void BeginDisconnect() {
         if (state == MqttConnectionState::Disconnecting) return;
@@ -426,6 +427,11 @@ struct MqttSession::Impl {
         case CommandType::Disconnect:
             next_connect.reset();
             BeginDisconnect();
+            break;
+        case CommandType::Abort:
+            next_connect.reset();
+            if (state == MqttConnectionState::Connected) FinishDisconnect({}, true);
+            else FinishDisconnect();
             break;
         case CommandType::Publish: {
             if (command.generation != generation.load()) {
@@ -571,6 +577,10 @@ MqttAdmission MqttSession::Connect(MqttEndpoint endpoint, std::string client_id,
 void MqttSession::Disconnect() {
     impl_->Enqueue({Impl::CommandType::Disconnect, {}, {}, {}, MqttPublishQos::Qos0,
                     std::nullopt});
+}
+MqttAdmission MqttSession::SimulateAbnormalDisconnect() {
+    return impl_->Enqueue({Impl::CommandType::Abort, {}, {}, {}, MqttPublishQos::Qos0,
+                          std::nullopt});
 }
 MqttAdmission MqttSession::Subscribe(std::string topic) {
     if (!IsValidSubscriptionFilter(topic) || !MqttPacketFits({5, topic.size()})) return MqttAdmission::TooLarge;

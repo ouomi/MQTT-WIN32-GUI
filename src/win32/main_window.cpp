@@ -41,7 +41,6 @@ struct PanelBounds {
     RECT splitter{};
     RECT messages{};
     RECT publisher{};
-    RECT will{};
 };
 
 RECT InsetPanel(RECT bounds) {
@@ -60,7 +59,7 @@ int SubscriptionPanelWidth(int requested_width, int content_width) {
 }
 
 PanelBounds CalculatePanelBounds(HWND status, int width, int height,
-                                 int requested_subscription_width, bool will_expanded) {
+                                 int requested_subscription_width) {
     RECT status_rect{};
     GetWindowRect(status, &status_rect);
     const int status_height = status_rect.bottom - status_rect.top;
@@ -70,9 +69,6 @@ PanelBounds CalculatePanelBounds(HWND status, int width, int height,
     const int splitter_left = kControlMargin + left_width;
     const int right_x = splitter_left + kSplitterWidth;
     const int publisher_height = kPublishContentHeight + 2 * kClassicPanelInset;
-    const int will_height = will_expanded
-                                ? WillPanel::kExpandedContentHeight + 2 * kClassicPanelInset
-                                : 0;
     const int panel_top = kControlMargin + kConnectionContentHeight +
                           2 * kClassicPanelInset + kPanelGap;
 
@@ -83,9 +79,7 @@ PanelBounds CalculatePanelBounds(HWND status, int width, int height,
         width - kControlMargin,
         kControlMargin + kConnectionContentHeight + 2 * kClassicPanelInset,
     };
-    panels.will = {0, client_height - will_height, width, client_height};
-    const int work_area_bottom = will_expanded ? panels.will.top - kControlGap
-                                                : client_height;
+    const int work_area_bottom = client_height;
     panels.subscriptions = {kControlMargin, panel_top, splitter_left, work_area_bottom};
     panels.splitter = {splitter_left, panel_top, right_x, work_area_bottom};
     panels.publisher = {right_x, work_area_bottom - publisher_height,
@@ -236,7 +230,13 @@ struct MainWindow::Impl {
         publisher.SetTopics(subscriptions.ActiveTopics());
         status = AddControl(STATUSCLASSNAMEW, SBARS_SIZEGRIP | WS_CLIPSIBLINGS, IDC_STATUS,
                             window, WS_EX_STATICEDGE);
-        will.Create(window, language);
+        will.Create(window, language, [this] {
+            if (connection_state != MqttConnectionState::Connected || !will.Settings().enabled) return;
+            if (ReportAdmission(mqtt->SimulateAbnormalDisconnect())) {
+                connection_state = MqttConnectionState::Disconnecting;
+                UpdateConnectionUi();
+            }
+        });
         messages.Append(std::wstring(Text(language, UiText::InitialMessage)));
         UpdateConnectionUi();
     }
@@ -254,8 +254,7 @@ struct MainWindow::Impl {
     void Layout(int width, int height, bool splitter_only = false) const {
         if (!splitter_only) SendMessageW(status, WM_SIZE, 0, 0);
         const PanelBounds panels = CalculatePanelBounds(status, width, height,
-                                                        subscription_panel_width,
-                                                        will.IsExpanded());
+                                                        subscription_panel_width);
         {
             ControlLayoutBatch geometry;
             if (!splitter_only) connection.Layout(InsetPanel(panels.connection));
@@ -268,10 +267,10 @@ struct MainWindow::Impl {
                 MapWindowPoints(HWND_DESKTOP, window, reinterpret_cast<LPPOINT>(&status_bounds), 2);
                 const int status_text_right =
                     status_bounds.right - GetSystemMetrics(SM_CXVSCROLL) -
-                    WillPanel::kStatusToggleButtonGap - WillPanel::kStatusToggleButtonSize -
+                    WillPanel::kStatusButtonGap - WillPanel::kStatusButtonWidth -
                     kControlGap;
                 SendMessageW(status, SB_SETPARTS, 1, reinterpret_cast<LPARAM>(&status_text_right));
-                will.Layout(InsetPanel(panels.will), status_bounds);
+                will.Layout(status_bounds);
             }
         } // Commit all changed control positions before repainting.
         // Child invalidation is handled by their geometry changes. Allow paint
@@ -286,7 +285,7 @@ struct MainWindow::Impl {
         RECT client_rect{};
         GetClientRect(window, &client_rect);
         return CalculatePanelBounds(status, client_rect.right, client_rect.bottom,
-                                    subscription_panel_width, will.IsExpanded());
+                                    subscription_panel_width);
     }
 
     bool IsOverSplitter(POINT point) const {
@@ -363,9 +362,6 @@ struct MainWindow::Impl {
         DrawEdge(device_context, &panels.splitter, EDGE_RAISED, BF_RECT | BF_MIDDLE);
         DrawEdge(device_context, &panels.messages, EDGE_RAISED, BF_RECT | BF_MIDDLE);
         DrawEdge(device_context, &panels.publisher, EDGE_RAISED, BF_RECT | BF_MIDDLE);
-        if (will.IsExpanded()) {
-            DrawEdge(device_context, &panels.will, EDGE_RAISED, BF_RECT | BF_MIDDLE);
-        }
     }
 
     bool ReportAdmission(MqttAdmission result) {
@@ -393,6 +389,8 @@ struct MainWindow::Impl {
     void HandleConnectionRequest(const ConnectionPanelRequest& request) {
         if (request.type == ConnectionPanelRequest::Type::Disconnect) {
             mqtt->Disconnect();
+            connection_state = MqttConnectionState::Disconnecting;
+            UpdateConnectionUi();
             return;
         }
         if (request.type != ConnectionPanelRequest::Type::Connect) {
@@ -495,7 +493,12 @@ struct MainWindow::Impl {
                                 L" operation=" + std::to_wstring(event->operation));
                 break;
             case MqttConnectionState::Disconnected:
-                messages.Append(std::wstring(Text(language, UiText::DisconnectedMessage)));
+                if (event->simulated_disconnect) {
+                    will.ShowTestCompleted();
+                    messages.Append(std::wstring(Text(language, UiText::LastWillTestCompleted)));
+                } else {
+                    messages.Append(std::wstring(Text(language, UiText::DisconnectedMessage)));
+                }
                 if (!event->detail.empty()) messages.Append(LocalizeSubscriptionDetail(language, Utf8ToWide(event->detail)),
                                 L"generation=" + std::to_wstring(event->generation) +
                                 L" operation=" + std::to_wstring(event->operation));
@@ -713,11 +716,6 @@ LRESULT CALLBACK MainWindow::WindowProc(HWND window, UINT message, WPARAM wparam
         }
         break;
     }
-    case WM_DRAWITEM:
-        if (app.will.HandleDrawItem(*reinterpret_cast<const DRAWITEMSTRUCT*>(lparam))) {
-            return TRUE;
-        }
-        break;
     case WM_COMMAND: {
         const WORD id = LOWORD(wparam);
         const WORD notification = HIWORD(wparam);
@@ -732,15 +730,7 @@ LRESULT CALLBACK MainWindow::WindowProc(HWND window, UINT message, WPARAM wparam
             return 0;
         }
 
-        bool will_layout_changed = false;
-        if (app.will.HandleCommand(app.language, id, notification, will_layout_changed)) {
-            if (will_layout_changed) {
-                RECT client_rect{};
-                GetClientRect(window, &client_rect);
-                app.Layout(client_rect.right, client_rect.bottom);
-            }
-            return 0;
-        }
+        if (app.will.HandleCommand(id, notification)) return 0;
 
         SubscriptionPanelChanges subscription_changes =
             app.subscriptions.HandleCommand(window, app.language, id, notification);

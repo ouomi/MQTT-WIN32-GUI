@@ -35,6 +35,7 @@ struct MqttEvent {
     std::uint64_t generation = 0;
     std::uint64_t operation = 0;
     std::uint64_t received_ms = 0;
+    bool simulated_disconnect = false;
 };
 
 class MqttSession {
@@ -50,6 +51,8 @@ public:
     MqttAdmission Connect(MqttEndpoint endpoint, std::string client_id,
                  std::optional<MqttLastWill> last_will = std::nullopt);
     void Disconnect();
+    // Close the transport without sending MQTT DISCONNECT.
+    MqttAdmission SimulateAbnormalDisconnect();
     MqttAdmission Subscribe(std::string topic);
     MqttAdmission Unsubscribe(std::string topic);
     MqttAdmission Publish(std::string topic, std::string payload, MqttPublishQos qos);

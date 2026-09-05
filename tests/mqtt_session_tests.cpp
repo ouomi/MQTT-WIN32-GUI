@@ -34,7 +34,10 @@ public:
         const auto header = mqtt_unpack_fixed_header(&response, p, n);
         check(header > 0, "complete worker packets");
         const auto type = p[0] >> 4;
-        if (type == 1) input.insert(input.end(), {0x20, 2, 0, 0});
+        if (type == 1) {
+            connect_has_will = (p[header + 7] & 4) != 0;
+            input.insert(input.end(), {0x20, 2, 0, 0});
+        }
         if (type == 8 || type == 10) {
             ++subscriptions;
             input.insert(input.end(), {static_cast<uint8_t>(type == 8 ? 0x90 : 0xb0),
@@ -64,10 +67,12 @@ public:
         while (n < size && !input.empty()) { p[n++] = input.front(); input.pop_front(); }
         return n;
     }
-    void Close() override { std::lock_guard<std::mutex> lock(mutex); input.clear(); }
+    void Close() override { std::lock_guard<std::mutex> lock(mutex); input.clear(); ++closes; }
     std::chrono::steady_clock::time_point Now() const override {
         return std::chrono::steady_clock::time_point(std::chrono::seconds(seconds.load()));
     }
+    std::atomic<bool> connect_has_will{false};
+    std::atomic<int> closes{0};
     std::atomic<int> opens{0}, subscriptions{0}, disconnects{0}, pings{0}, seconds{0}, blocked_calls{0};
     std::atomic<int> publishes{0}, qos1_sends{0}, pubrecs{0}, pubcomps{0};
     bool delay_publish_ack = false; // Set before the session worker is created.
@@ -75,6 +80,43 @@ public:
     std::atomic<bool> blocked{false}, reject{false}, block_open{false};
     std::mutex mutex; std::deque<uint8_t> input;
 };
+static void test_abnormal_disconnect() {
+    auto broker = std::make_shared<Broker>();
+    std::atomic<MqttConnectionState> state{MqttConnectionState::Disconnected};
+    std::atomic<int> simulated{0};
+    MqttSession session([&](MqttEvent event) {
+        if (event.type == MqttEventType::StateChanged) {
+            if (event.simulated_disconnect) {
+                check(event.connection_state == MqttConnectionState::Disconnected, "simulation reports disconnected");
+                ++simulated;
+            }
+            state = event.connection_state;
+        }
+    }, broker);
+    check(session.Connect({"localhost", "1883", false}, "will-test", MqttLastWill{"last/will", "offline"})
+          == MqttAdmission::Accepted, "will connection accepted");
+    wait([&] { return state == MqttConnectionState::Connected; });
+    check(broker->connect_has_will, "CONNECT registers Last Will");
+    // Closing must work even when pending application bytes cannot be sent.
+    broker->blocked = true;
+    session.Publish("busy", "pending", MqttPublishQos::Qos1);
+    wait([&] { return broker->blocked_calls > 0; });
+    const auto closes = broker->closes.load();
+    check(session.SimulateAbnormalDisconnect() == MqttAdmission::Accepted, "simulation accepted");
+    wait([&] { return state == MqttConnectionState::Disconnected; });
+    check(broker->closes > closes && simulated == 1, "transport closed before simulation completion");
+    check(broker->disconnects == 0, "simulation does not send MQTT DISCONNECT");
+    check(broker->opens == 1, "simulation does not reconnect");
+    // The same session remains usable, and ordinary disconnect stays graceful.
+    broker->blocked = false;
+    session.Connect({"localhost", "1883", false}, "will-test", MqttLastWill{"last/will", "offline"});
+    wait([&] { return state == MqttConnectionState::Connected; });
+    session.Disconnect();
+    wait([&] { return state == MqttConnectionState::Disconnected; });
+    check(broker->disconnects == 1 && simulated == 1, "normal disconnect is not a simulation");
+    session.Stop();
+}
+
 static void test_protocol_recovery_in_worker() {
     auto broker = std::make_shared<Broker>();
     broker->delay_publish_ack = true;
@@ -122,6 +164,7 @@ static void test_protocol_recovery_in_worker() {
 }
 
 int main() {
+    test_abnormal_disconnect();
     test_protocol_recovery_in_worker();
     MqttSubscriptions model;
     check(model.SetDesired({"topic"}), "initial model intent");

@@ -13,13 +13,17 @@ A small Windows MQTT debugging tool built with native Win32 controls. Connect to
 需要 **Windows 8 或更新版本**。打开发布目录中的 `mqttwin32.exe`，无需安装。
 
 1. 输入 Broker 地址，例如 `mqtt://localhost:1883`；TLS 版也支持 `mqtts://broker.example:8883`。
-2. 设置客户端 ID；如果需要遗嘱消息，在连接前配置。
+2. 设置客户端 ID；如果需要遗嘱消息，点击状态栏右侧的“遗嘱消息…”按钮，在独立窗口中启用并填写主题、内容，然后连接。连接期间遗嘱配置不可修改；关闭窗口会保留本次运行中的配置。
 3. 点击连接，添加并勾选需要订阅的主题过滤器，例如 `sensors/#`。
 4. 在发布区独立输入主题，例如 `sensors/temperature`，选择 QoS 并发送。
 
 发布支持 QoS 0/1/2 和空消息，无需先订阅。界面支持中文和英文。连接地址、客户端 ID、订阅和部分界面设置自动保存在 EXE 旁的 `WIN32-MQTT.ini`。订阅改动立即保存，连接字段停止输入约 500 毫秒后保存，窗口大小在调整结束后保存，分隔条位置在松开约 500 毫秒后保存（再次拖动会重新计时）；关闭窗口时补存尚未保存的改动。待删除订阅不会写回配置。
 
 TLS 版使用 OpenSSL 验证证书链和服务器身份，最低 TLS 1.2。请将 EXE、OpenSSL DLL 和 `ca-bundle.pem` 保持在同一目录，并保留许可证文件。非 TLS 版仅支持 `mqtt://`。
+
+### 遗嘱消息测试
+
+打开两个客户端，并使用不同的客户端 ID 连接同一个服务器。先让观察客户端订阅遗嘱主题，再让配置了遗嘱的客户端连接。在其遗嘱窗口点击“模拟异常掉线”：程序直接关闭当前 TCP 连接，不发送 MQTT DISCONNECT，也不会自动重连。完成后窗口和消息日志显示“已断开 TCP 连接，模拟异常掉线。”，是否收到遗嘱消息由观察客户端确认。正常“断开连接”不触发遗嘱。
 
 ### 从 Linux 构建
 
@@ -120,13 +124,18 @@ dist/<release-preset>/         可直接打包分发的完整目录
 Requires **Windows 8 or later**. Open `mqttwin32.exe` from the distribution directory; no installer is needed.
 
 1. Enter a broker URI, such as `mqtt://localhost:1883`. TLS builds also accept `mqtts://broker.example:8883`.
-2. Set the client ID and, if needed, configure the Last Will before connecting.
+2. Set the client ID. To configure a Last Will, click “Last Will…” at the right of the status bar, enable it and enter the topic and message in the separate window before connecting. Settings are locked while connected and kept for the current run when the window is closed.
 3. Connect, add subscription filters such as `sensors/#`, and tick their checkboxes.
 4. Enter a separate publish topic such as `sensors/temperature`, choose a QoS, and send.
 
 Publishing supports QoS 0/1/2 and empty messages without requiring a subscription. The UI supports Chinese and English. The server URI, client ID, subscriptions, and some display settings are automatically saved in `WIN32-MQTT.ini` beside the EXE. Subscription changes save immediately; connection fields save after about 500 ms of idle typing; window dimensions save when resizing ends; the splitter position saves about 500 ms after release, restarting the delay if dragged again. Closing flushes pending edits. Pending deletions are excluded from saved subscriptions. Failed saves retain edits in memory, report the failure in the log and status bar, and retry every 5 seconds; a failed final save shows a dialog.
 
 TLS builds use OpenSSL to verify the certificate chain and server identity, with TLS 1.2 as the minimum. Keep the EXE, OpenSSL DLLs, and `ca-bundle.pem` together, along with the license files. TCP-only builds support `mqtt://` only.
+
+### Last Will test
+
+Open two clients with different client IDs on the same broker. Subscribe to the Last Will topic in the observer, then connect the client configured with the Last Will. Click “Simulate abnormal disconnect” in its Last Will window to close the current TCP connection without MQTT DISCONNECT or automatic reconnection. The window and message log confirm that TCP was closed; verify receipt in the observer client. A normal disconnect does not trigger the Last Will.
+
 
 ### Build from Linux
 

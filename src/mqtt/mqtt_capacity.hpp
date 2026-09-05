@@ -23,7 +23,7 @@ inline bool MqttPacketFits(std::initializer_list<std::size_t> fields) {
 }
 
 // Caller serializes access. One zero-cost reserved entry is available for
-// Disconnect, even when application work has exhausted either capacity.
+// disconnect operations, even when application work has exhausted either capacity.
 template<class T>
 class MqttCommandQueue {
     struct Entry { T value; std::size_t bytes; bool control; };

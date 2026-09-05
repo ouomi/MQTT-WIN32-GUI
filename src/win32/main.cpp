@@ -5,6 +5,7 @@
 #include "app_settings.h"
 #include "control_helpers.h"
 #include "main_window.h"
+#include "will_panel.h"
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
     // Keep every common control on the pre-visual-style rendering path.
@@ -51,6 +52,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
 
     MSG message{};
     while (GetMessageW(&message, nullptr, 0, 0) > 0) {
+        if (win32mqtt::WillPanel::TranslateDialogMessage(message)) continue;
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
