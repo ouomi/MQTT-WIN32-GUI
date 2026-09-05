@@ -9,6 +9,8 @@
 namespace win32mqtt {
 namespace {
 
+thread_local ControlLayoutBatch* active_layout = nullptr;
+
 constexpr DWORD kDwmwaWindowCornerPreference = 33;
 constexpr int kDwmcpDoNotRound = 1;
 
@@ -59,6 +61,27 @@ void UseClassicWindowFrame(HWND window) {
                           sizeof(corner_preference));
 }
 
+ControlLayoutBatch::ControlLayoutBatch() : previous_(active_layout) {
+    active_layout = this;
+}
+
+ControlLayoutBatch::~ControlLayoutBatch() {
+    active_layout = previous_;
+    if (positions_.empty()) return;
+    HDWP batch = BeginDeferWindowPos(static_cast<int>(positions_.size()));
+    for (const auto& p : positions_) {
+        if (!batch) break;
+        batch = DeferWindowPos(batch, p.control, nullptr, p.x, p.y, p.width, p.height,
+                               SWP_NOACTIVATE | SWP_NOZORDER);
+    }
+    if (batch && EndDeferWindowPos(batch)) return;
+    // A failed deferred batch must not leave the UI with an incomplete layout.
+    for (const auto& p : positions_) {
+        SetWindowPos(p.control, nullptr, p.x, p.y, p.width, p.height,
+                     SWP_NOACTIVATE | SWP_NOZORDER);
+    }
+}
+
 void PositionControl(HWND control, int x, int y, int width, int height) {
     if (control == nullptr) return;
     RECT current{};
@@ -66,6 +89,10 @@ void PositionControl(HWND control, int x, int y, int width, int height) {
         MapWindowPoints(HWND_DESKTOP, GetParent(control), reinterpret_cast<LPPOINT>(&current), 2);
         if (current.left == x && current.top == y &&
             current.right - current.left == width && current.bottom - current.top == height) return;
+    }
+    if (active_layout) {
+        active_layout->positions_.push_back({control, x, y, width, height});
+        return;
     }
     // Let Windows invalidate moved/resized controls and exposed areas only.
     // Layout no longer forces every child to erase and repaint synchronously.

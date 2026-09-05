@@ -242,27 +242,35 @@ struct MainWindow::Impl {
         SendMessageW(status, SB_SETTEXTW, 0, reinterpret_cast<LPARAM>(status_text));
     }
 
-    void Layout(int width, int height) const {
-        SendMessageW(status, WM_SIZE, 0, 0);
+    void Layout(int width, int height, bool splitter_only = false) const {
+        if (!splitter_only) SendMessageW(status, WM_SIZE, 0, 0);
         const PanelBounds panels = CalculatePanelBounds(status, width, height,
                                                         subscription_panel_width,
                                                         will.IsExpanded());
-        connection.Layout(InsetPanel(panels.connection));
-        subscriptions.Layout(InsetPanel(panels.subscriptions));
-        messages.Layout(InsetPanel(panels.messages));
-        publisher.Layout(InsetPanel(panels.publisher));
-        RECT status_bounds{};
-        GetWindowRect(status, &status_bounds);
-        MapWindowPoints(HWND_DESKTOP, window, reinterpret_cast<LPPOINT>(&status_bounds), 2);
-        const int status_text_right =
-            status_bounds.right - GetSystemMetrics(SM_CXVSCROLL) -
-            WillPanel::kStatusToggleButtonGap - WillPanel::kStatusToggleButtonSize -
-            kControlGap;
-        SendMessageW(status, SB_SETPARTS, 1, reinterpret_cast<LPARAM>(&status_text_right));
-        will.Layout(InsetPanel(panels.will), status_bounds);
+        {
+            ControlLayoutBatch geometry;
+            if (!splitter_only) connection.Layout(InsetPanel(panels.connection));
+            subscriptions.Layout(InsetPanel(panels.subscriptions));
+            messages.Layout(InsetPanel(panels.messages));
+            publisher.Layout(InsetPanel(panels.publisher));
+            if (!splitter_only) {
+                RECT status_bounds{};
+                GetWindowRect(status, &status_bounds);
+                MapWindowPoints(HWND_DESKTOP, window, reinterpret_cast<LPPOINT>(&status_bounds), 2);
+                const int status_text_right =
+                    status_bounds.right - GetSystemMetrics(SM_CXVSCROLL) -
+                    WillPanel::kStatusToggleButtonGap - WillPanel::kStatusToggleButtonSize -
+                    kControlGap;
+                SendMessageW(status, SB_SETPARTS, 1, reinterpret_cast<LPARAM>(&status_text_right));
+                will.Layout(InsetPanel(panels.will), status_bounds);
+            }
+        } // Commit all changed control positions before repainting.
         // Child invalidation is handled by their geometry changes. Allow paint
         // requests to coalesce instead of erasing all controls on every move.
-        RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_NOCHILDREN);
+        const RECT work_area{panels.subscriptions.left, panels.subscriptions.top,
+                             panels.publisher.right, panels.subscriptions.bottom};
+        RedrawWindow(window, splitter_only ? &work_area : nullptr, nullptr,
+                     RDW_INVALIDATE | RDW_NOCHILDREN);
     }
 
     PanelBounds CurrentPanelBounds() const {
@@ -281,6 +289,7 @@ struct MainWindow::Impl {
         const PanelBounds panels = CurrentPanelBounds();
         splitter_drag_offset = x - panels.splitter.left;
         splitter_dragging = true;
+        last_splitter_x = x;
         SetCapture(window);
     }
 
@@ -296,10 +305,30 @@ struct MainWindow::Impl {
         const int current_width = SubscriptionPanelWidth(subscription_panel_width, content_width);
         if (next_width == current_width) return;
         subscription_panel_width = next_width;
-        Layout(client_rect.right, client_rect.bottom);
+        Layout(client_rect.right, client_rect.bottom, true);
+    }
+
+    void QueueSplitterMove(int x) {
+        // Layout/capture can generate mouse messages without physical movement.
+        if (x == last_splitter_x) return;
+        last_splitter_x = x;
+        pending_splitter_x = x;
+        if (!splitter_update_pending) {
+            splitter_update_pending = SetTimer(window, SplitterTimer, 16, nullptr) != 0;
+            if (!splitter_update_pending) MoveSplitter(x);
+        }
+    }
+
+    void FlushSplitterMove() {
+        KillTimer(window, SplitterTimer);
+        if (!splitter_update_pending) return;
+        splitter_update_pending = false;
+        MoveSplitter(pending_splitter_x);
     }
 
     void EndSplitterDrag(int x) {
+        KillTimer(window, SplitterTimer);
+        splitter_update_pending = false;
         MoveSplitter(x);
         splitter_dragging = false;
         if (GetCapture() == window) {
@@ -308,6 +337,8 @@ struct MainWindow::Impl {
     }
 
     void CancelSplitterDrag() {
+        KillTimer(window, SplitterTimer);
+        splitter_update_pending = false;
         splitter_dragging = false;
     }
 
@@ -486,10 +517,14 @@ struct MainWindow::Impl {
     MqttConnectionState connection_state{MqttConnectionState::Disconnected};
     int subscription_panel_width{};
     bool splitter_dragging{};
+    bool splitter_update_pending{};
+    int pending_splitter_x{};
+    int last_splitter_x{};
     int splitter_drag_offset{};
     MqttWindowBridge mqtt_events;
     std::unique_ptr<MqttSession> mqtt;
     static constexpr UINT_PTR MqttEventTimer = 1;
+    static constexpr UINT_PTR SplitterTimer = 2;
 };
 
 MainWindow::MainWindow(AppSettings settings)
@@ -587,7 +622,7 @@ LRESULT CALLBACK MainWindow::WindowProc(HWND window, UINT message, WPARAM wparam
     }
     case WM_MOUSEMOVE:
         if (app.splitter_dragging) {
-            app.MoveSplitter(GET_X_LPARAM(lparam));
+            app.QueueSplitterMove(GET_X_LPARAM(lparam));
             SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
             return 0;
         }
@@ -635,6 +670,10 @@ LRESULT CALLBACK MainWindow::WindowProc(HWND window, UINT message, WPARAM wparam
         return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
     }
     case WM_TIMER:
+        if (wparam == Impl::SplitterTimer) {
+            app.FlushSplitterMove();
+            return 0;
+        }
         if (wparam == Impl::MqttEventTimer) {
             app.PollMqttEvents();
             app.SavePendingSettings();
@@ -705,6 +744,7 @@ LRESULT CALLBACK MainWindow::WindowProc(HWND window, UINT message, WPARAM wparam
         break;
     }
     case WM_CLOSE:
+        app.CancelSplitterDrag();
         KillTimer(window, Impl::MqttEventTimer);
         // Child controls are still alive here; capture text before DestroyWindow.
         if (app.controls_ready) {
