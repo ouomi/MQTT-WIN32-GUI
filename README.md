@@ -10,7 +10,9 @@ A small Windows MQTT debugging tool built with native Win32 controls. Connect to
 
 ### 使用
 
-需要 **Windows 8 或更新版本**。打开发布目录中的 `mqttwin32.exe`，无需安装。
+兼容目标为 **Windows 7 或更新版本**（Win7 真机验证待完成）。打开发布目录中的 `mqttwin32.exe`，无需安装。
+
+DNS 解析在 Win8+ 使用系统异步接口，在 Win7 使用独立后台线程。解析等待上限为 5 秒；取消连接或退出会话不等待后台解析结束，晚到结果会被释放。全程序最多保留 4 个 Win7 回退解析任务，额度占满时会提示解析繁忙。
 
 1. 输入 Broker 地址，例如 `mqtt://localhost:1883`；TLS 版也支持 `mqtts://broker.example:8883`。
 2. 设置客户端 ID；如果需要遗嘱消息，点击发布区 QoS 同一行右侧的“遗嘱消息”按钮，在独立窗口中启用并填写主题、内容，然后连接。连接期间遗嘱配置不可修改；关闭窗口会保留本次运行中的配置。
@@ -122,7 +124,9 @@ dist/<release-preset>/         可直接打包分发的完整目录
 
 ### Usage
 
-Requires **Windows 8 or later**. Open `mqttwin32.exe` from the distribution directory; no installer is needed.
+Targets **Windows 7 or later** (Windows 7 runtime validation is pending). Open `mqttwin32.exe` from the distribution directory; no installer is needed.
+
+DNS uses the system asynchronous API on Windows 8+ and an independent worker on Windows 7. The application waits up to 5 seconds; cancellation and session shutdown do not wait for the resolver, and late results are freed. At most four fallback queries are retained process-wide; further queries report that the resolver is busy.
 
 1. Enter a broker URI, such as `mqtt://localhost:1883`. TLS builds also accept `mqtts://broker.example:8883`.
 2. Set the client ID. To configure a Last Will, click “Last Will” on the right of the QoS row in the publish area, enable it and enter the topic and message in the separate window before connecting. Settings are locked while connected and kept for the current run when the window is closed.

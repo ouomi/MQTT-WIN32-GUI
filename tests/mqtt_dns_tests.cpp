@@ -4,14 +4,19 @@
 #include <iostream>
 #include <memory>
 #include <thread>
+#include <chrono>
+#include <vector>
 
 static int startup_result;
 static int query_result;
 static bool supported;
 static bool callback_during_start;
-static unsigned startup_refs;
-static unsigned frees;
+static std::atomic<unsigned> startup_refs;
+static std::atomic<unsigned> frees;
 static unsigned cancels;
+static std::atomic<bool> fallback_release{false};
+static std::atomic<unsigned> fallback_entered{0};
+static int fallback_result = 0;
 static OVERLAPPED* pending;
 static CompletionRoutine callback;
 static ADDRINFOEXW** result_slot;
@@ -71,6 +76,25 @@ int GetAddrInfoExW(const wchar_t* host, const wchar_t* port, DWORD, void*, const
     if (callback_during_start) Complete(0);
     return query_result;
 }
+int GetAddrInfoW(const wchar_t* host, const wchar_t* port, const ADDRINFOW* hints,
+                 ADDRINFOW** result) {
+    ++fallback_entered;
+    while (!fallback_release.load()) std::this_thread::yield();
+    Check(std::wcscmp(host, L"broker.example") == 0 && std::wcscmp(port, L"1883") == 0,
+          "fallback input survives owner destruction");
+    Check(hints->ai_family == AF_UNSPEC && hints->ai_socktype == SOCK_STREAM, "fallback hints");
+    if (!fallback_result) *result = new ADDRINFOW;
+    return fallback_result;
+}
+void FreeAddrInfoW(ADDRINFOW* result) { ++frees; delete result; }
+template<class Predicate>
+static void Await(Predicate predicate) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (!predicate()) {
+        Check(std::chrono::steady_clock::now() < deadline, "worker progress deadline");
+        std::this_thread::yield();
+    }
+}
 static void Reset() {
     Check(startup_refs == 0 && pending == nullptr, "previous query released all resources");
     startup_result = 0; query_result = 0; supported = true; callback_during_start = false;
@@ -98,7 +122,7 @@ static void TestPending(bool abandon, bool inline_completion) {
             std::thread resolver([] { Complete(0); });
             resolver.join();
         }
-        if (!abandon) Check(query.Done() && query.Error() == 0 && query.Addresses(), "async result delivered");
+        if (!abandon) Check(query.Done() && query.Error() == 0 && query.WithAddresses([](const auto* addresses) { return addresses != nullptr; }), "async result delivered");
     }
     if (abandon) {
         Check(cancels == 1 && startup_refs == 1 && frees == 0,
@@ -107,6 +131,44 @@ static void TestPending(bool abandon, bool inline_completion) {
         resolver.join();
     }
     Check(startup_refs == 0 && frees == 1, "callback and owner release exactly once");
+}
+static void TestFallback() {
+    Reset(); supported = false; fallback_release = false; fallback_entered = 0;
+    std::vector<std::unique_ptr<win32mqtt::MqttDnsQuery>> queries;
+    std::string error;
+    for (unsigned i = 0; i < 4; ++i) {
+        auto query = std::make_unique<win32mqtt::MqttDnsQuery>();
+        Check(query->Start("broker.example", "1883", error), "fallback starts");
+        Check(!query->Done(), "fallback does not block caller");
+        queries.push_back(std::move(query));
+    }
+    Await([] { return fallback_entered.load() == 4; });
+    queries.clear(); // Simulates cancellation/timeout/session destruction while DNS is blocked.
+    Check(startup_refs == 4 && frees == 0, "abandoned fallback workers own their resources");
+    {
+        win32mqtt::MqttDnsQuery excess;
+        Check(!excess.Start("broker.example", "1883", error) && error.find("busy") != std::string::npos,
+              "abandoned workers still count against global limit");
+    }
+    fallback_release = true;
+    Await([] { return startup_refs.load() == 0; });
+    Check(frees == 4, "late fallback results freed");
+    // Admission may follow WSACleanup by a few instructions; wait for slot recovery.
+    for (int code : {0, 11001}) {
+        fallback_result = code;
+        std::unique_ptr<win32mqtt::MqttDnsQuery> query;
+        Await([&] {
+            query = std::make_unique<win32mqtt::MqttDnsQuery>();
+            return query->Start("broker.example", "1883", error);
+        });
+        Await([&] { return query->Done(); });
+        Check(query->Error() == static_cast<DWORD>(code), "fallback completion status");
+        Check(query->WithAddresses([&](const auto* addresses) { return (addresses != nullptr) == (code == 0); }),
+              "fallback result available to transport");
+        query.reset();
+        Await([] { return startup_refs.load() == 0; });
+    }
+    fallback_result = 0;
 }
 static void TestCancelRace() {
     for (unsigned i = 0; i < 100; ++i) {
@@ -133,12 +195,7 @@ int main() {
     TestPending(true, false);
     TestPending(false, true);
     TestCancelRace();
-    Reset(); supported = false;
-    {
-        win32mqtt::MqttDnsQuery query;
-        std::string error;
-        Check(!query.Start("broker.example", "1883", error), "unsupported async API fails without synchronous fallback");
-    }
+    TestFallback();
     Reset(); startup_result = 1;
     {
         win32mqtt::MqttDnsQuery query;

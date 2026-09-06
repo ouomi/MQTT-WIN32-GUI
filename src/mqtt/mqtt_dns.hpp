@@ -9,16 +9,20 @@
 #include <atomic>
 #include <cstring>
 #include <string>
+#include <thread>
+#include <system_error>
 
 namespace win32mqtt {
 
 // Windows 8+ exports this API; older MinGW headers omit its declaration.
 using CancelDns = INT (WSAAPI*)(LPHANDLE);
 
-// Owns all storage touched by asynchronous Winsock. The callback owns a reference
-// independent of the session, including a Winsock startup reference, so cancellation
-// never requires waiting for DNS completion during session destruction.
+// The callback or fallback worker owns storage independently of the session,
+// including a Winsock startup reference. Session destruction never waits for DNS.
 class MqttDnsQuery {
+    // Process-wide bound, including queries abandoned by destroyed sessions.
+    inline static std::atomic<unsigned> fallback_queries_{0};
+    static constexpr unsigned MaxFallbackQueries = 4;
     struct State;
     struct Completion {
         OVERLAPPED overlapped{};
@@ -31,6 +35,8 @@ class MqttDnsQuery {
         std::atomic<bool> done{false};
         DWORD error = 0;
         ADDRINFOEXW* addresses = nullptr;
+        ADDRINFOW* fallback_addresses = nullptr;
+        bool fallback_slot = false;
         ADDRINFOEXW hints{};
         HANDLE cancellation = nullptr;
         std::wstring host;
@@ -41,7 +47,9 @@ class MqttDnsQuery {
         }
         ~State() {
             if (addresses) FreeAddrInfoExW(addresses);
+            if (fallback_addresses) FreeAddrInfoW(fallback_addresses);
             if (winsock_started) WSACleanup();
+            if (fallback_slot) fallback_queries_.fetch_sub(1);
         }
         void Release() { if (references.fetch_sub(1) == 1) delete this; }
     };
@@ -58,18 +66,16 @@ public:
     MqttDnsQuery& operator=(const MqttDnsQuery&) = delete;
     ~MqttDnsQuery() {
         if (!state_) return;
-        if (!state_->done.load()) cancel_(&state_->cancellation);
+        if (cancel_ && !state_->done.load()) cancel_(&state_->cancellation);
         state_->Release();
     }
     bool Start(const std::string& host, const std::string& port, std::string& error) {
         if (state_) { error = "DNS query already started"; return false; }
-        // Resolve cancellation dynamically so unsupported systems fail explicitly
-        // instead of falling back to an unbounded synchronous lookup.
+        // Windows 7 uses a bounded, independently owned synchronous worker.
         const HMODULE module = GetModuleHandleW(L"ws2_32.dll");
         const auto symbol = module ? GetProcAddress(module, "GetAddrInfoExCancel") : nullptr;
         static_assert(sizeof(cancel_) == sizeof(symbol));
         std::memcpy(&cancel_, &symbol, sizeof(cancel_));
-        if (!cancel_) { error = "asynchronous DNS requires Windows 8 or later"; return false; }
         const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, host.c_str(), -1, nullptr, 0);
         if (!size) { error = "invalid DNS hostname"; return false; }
         std::wstring name(static_cast<std::size_t>(size), L'\0');
@@ -83,6 +89,38 @@ public:
             return false;
         }
         state_->winsock_started = true;
+        if (!cancel_) {
+            unsigned count = fallback_queries_.load();
+            while (count < MaxFallbackQueries &&
+                   !fallback_queries_.compare_exchange_weak(count, count + 1)) {}
+            if (count >= MaxFallbackQueries) {
+                state_->done.store(true);
+                state_->Release();
+                error = "DNS resolver busy; please retry later";
+                return false;
+            }
+            state_->fallback_slot = true;
+            std::thread resolver;
+            try {
+                resolver = std::thread([state = state_] {
+                    ADDRINFOW hints{};
+                    hints.ai_family = AF_UNSPEC;
+                    hints.ai_socktype = SOCK_STREAM;
+                    state->error = static_cast<DWORD>(GetAddrInfoW(state->host.c_str(),
+                        state->service.c_str(), &hints, &state->fallback_addresses));
+                    state->done.store(true);
+                    state->Release();
+                });
+            } catch (const std::system_error&) {
+                state_->done.store(true);
+                state_->Release();
+                error = "unable to start DNS resolver thread";
+                return false;
+            }
+            // Never join this worker: caller cancellation/timeout abandons its result.
+            resolver.detach();
+            return true;
+        }
         state_->hints.ai_family = AF_UNSPEC;
         state_->hints.ai_socktype = SOCK_STREAM;
         // A provider timeout complements the caller's monotonic deadline.
@@ -99,7 +137,12 @@ public:
     }
     bool Done() const { return state_->done.load(); }
     DWORD Error() const { return state_->error; } // Read only after Done().
-    const ADDRINFOEXW* Addresses() const { return state_->addresses; }
+    // Both Winsock result types expose the same socket fields. Only call after Done().
+    template<class Visitor>
+    bool WithAddresses(Visitor&& visitor) const {
+        if (cancel_) return visitor(static_cast<const ADDRINFOEXW*>(state_->addresses));
+        return visitor(static_cast<const ADDRINFOW*>(state_->fallback_addresses));
+    }
 private:
     State* state_ = nullptr;
     CancelDns cancel_ = nullptr;

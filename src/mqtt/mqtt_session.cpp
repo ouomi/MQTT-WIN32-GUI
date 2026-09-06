@@ -214,36 +214,38 @@ struct MqttSession::Impl {
         if (query.Error() != 0) { error = "DNS lookup failed"; return false; }
         connect_attempt.Enter(MqttConnectAttempt::Phase::Tcp, Now());
         // One deadline covers all addresses, not ten seconds per address.
-        for (const auto* address = query.Addresses(); address; address = address->ai_next) {
-            if (!ConnectionPending(error)) return false;
-            const SOCKET candidate = socket(address->ai_family, address->ai_socktype, address->ai_protocol);
-            if (candidate == INVALID_SOCKET) continue;
-            u_long nonblocking = 1;
-            if (ioctlsocket(candidate, FIONBIO, &nonblocking) != 0) { closesocket(candidate); continue; }
-            const int result = connect(candidate, address->ai_addr, static_cast<int>(address->ai_addrlen));
-            if (result == 0) { socket_handle = candidate; return ConnectionPending(error); }
-            const int socket_error = WSAGetLastError();
-            if (socket_error == WSAEWOULDBLOCK || socket_error == WSAEINPROGRESS) {
-                while (ConnectionPending(error)) {
-                    fd_set writable; FD_ZERO(&writable); FD_SET(candidate, &writable);
-                    fd_set failed; FD_ZERO(&failed); FD_SET(candidate, &failed);
-                    TIMEVAL timeout{0, 20000};
-                    const int ready = select(0, nullptr, &writable, &failed, &timeout);
-                    if (ready == SOCKET_ERROR) break;
-                    if (ready > 0) {
-                        int connect_error = 0; int length = sizeof(connect_error);
-                        if (getsockopt(candidate, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&connect_error), &length) == 0 &&
-                            connect_error == 0 && FD_ISSET(candidate, &writable)) {
-                            socket_handle = candidate; return ConnectionPending(error);
+        return query.WithAddresses([&](const auto* addresses) {
+            for (const auto* address = addresses; address; address = address->ai_next) {
+                if (!ConnectionPending(error)) return false;
+                const SOCKET candidate = socket(address->ai_family, address->ai_socktype, address->ai_protocol);
+                if (candidate == INVALID_SOCKET) continue;
+                u_long nonblocking = 1;
+                if (ioctlsocket(candidate, FIONBIO, &nonblocking) != 0) { closesocket(candidate); continue; }
+                const int result = connect(candidate, address->ai_addr, static_cast<int>(address->ai_addrlen));
+                if (result == 0) { socket_handle = candidate; return ConnectionPending(error); }
+                const int socket_error = WSAGetLastError();
+                if (socket_error == WSAEWOULDBLOCK || socket_error == WSAEINPROGRESS) {
+                    while (ConnectionPending(error)) {
+                        fd_set writable; FD_ZERO(&writable); FD_SET(candidate, &writable);
+                        fd_set failed; FD_ZERO(&failed); FD_SET(candidate, &failed);
+                        TIMEVAL timeout{0, 20000};
+                        const int ready = select(0, nullptr, &writable, &failed, &timeout);
+                        if (ready == SOCKET_ERROR) break;
+                        if (ready > 0) {
+                            int connect_error = 0; int length = sizeof(connect_error);
+                            if (getsockopt(candidate, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&connect_error), &length) == 0 &&
+                                connect_error == 0 && FD_ISSET(candidate, &writable)) {
+                                socket_handle = candidate; return ConnectionPending(error);
+                            }
+                            break;
                         }
-                        break;
                     }
                 }
+                closesocket(candidate);
             }
-            closesocket(candidate);
-        }
-        if (ConnectionPending(error)) error = "TCP connection failed";
-        return false;
+            if (ConnectionPending(error)) error = "TCP connection failed";
+            return false;
+        });
 #else
         (void)endpoint; error = "a transport backend is required"; return false;
 #endif

@@ -34,3 +34,7 @@ int WSACleanup();
 void FreeAddrInfoExW(ADDRINFOEXW*);
 int GetAddrInfoExW(const wchar_t*, const wchar_t*, DWORD, void*, const ADDRINFOEXW*,
                   ADDRINFOEXW**, TIMEVAL*, OVERLAPPED*, CompletionRoutine, HANDLE*);
+
+struct ADDRINFOW { int ai_family = 0; int ai_socktype = 0; };
+int GetAddrInfoW(const wchar_t*, const wchar_t*, const ADDRINFOW*, ADDRINFOW**);
+void FreeAddrInfoW(ADDRINFOW*);
