@@ -9,6 +9,7 @@ namespace win32mqtt {
 constexpr std::size_t MaxSettingsFileBytes = 4 * 1024 * 1024;
 // Empty strings are allowed for connection fields during first-time setup.
 bool ValidSettingsText(std::wstring_view value);
+bool ValidSettingsTlsServerName(std::wstring_view value);
 bool ValidSettingsServerUri(std::wstring_view value);
 std::optional<std::wstring> SettingsFromUtf8(std::string_view value);
 std::optional<std::string> SettingsToUtf8(std::wstring_view value);

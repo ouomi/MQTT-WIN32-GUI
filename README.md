@@ -19,7 +19,9 @@ DNS 解析在 Win8+ 使用系统异步接口，在 Win7 使用独立后台线程
 3. 点击连接，添加并勾选需要订阅的主题过滤器，例如 `sensors/#`。
 4. 在发布区独立输入主题，例如 `sensors/temperature`，选择 QoS 并发送。
 
-发布支持 QoS 0/1/2 和空消息，无需先订阅。界面支持中文和英文。连接地址、客户端 ID、订阅和部分界面设置自动保存在 EXE 旁的 `WIN32-MQTT.ini`。订阅改动立即保存，连接字段停止输入约 500 毫秒后保存，窗口大小在调整结束后保存，分隔条位置在松开约 500 毫秒后保存（再次拖动会重新计时）；关闭窗口时补存尚未保存的改动。待删除订阅不会写回配置。
+TLS 版的 **TLS SNI** 可独立指定域名：地址填 `mqtts://203.0.113.10:8883`，SNI 填 `broker.example.com`，即可连接指定 IP，并按该域名发送 SNI 和校验证书，无需解析该域名。示例 IP 请替换为实际 Broker IP。SNI 留空时使用地址中的主机名；若地址是 IP，则校验证书 IP SAN 且不发送域名 SNI。SNI 只填域名，不带协议、端口或路径；国际化域名使用 Punycode。该设置仅对 `mqtts://` 生效，连接期间不可修改。
+
+发布支持 QoS 0/1/2 和空消息，无需先订阅。界面支持中文和英文。连接地址、客户端 ID、TLS SNI、订阅和部分界面设置自动保存在 EXE 旁的 `WIN32-MQTT.ini`。订阅改动立即保存，连接字段停止输入约 500 毫秒后保存，窗口大小在调整结束后保存，分隔条位置在松开约 500 毫秒后保存（再次拖动会重新计时）；关闭窗口时补存尚未保存的改动。待删除订阅不会写回配置。
 
 TLS 版使用 OpenSSL 验证证书链和服务器身份，最低 TLS 1.2。请将 EXE、OpenSSL DLL 和 `ca-bundle.pem` 保持在同一目录，并保留许可证文件。非 TLS 版仅支持 `mqtt://`。
 
@@ -133,7 +135,9 @@ DNS uses the system asynchronous API on Windows 8+ and an independent worker on 
 3. Connect, add subscription filters such as `sensors/#`, and tick their checkboxes.
 4. Enter a separate publish topic such as `sensors/temperature`, choose a QoS, and send.
 
-Publishing supports QoS 0/1/2 and empty messages without requiring a subscription. The UI supports Chinese and English. The server URI, client ID, subscriptions, and some display settings are automatically saved in `WIN32-MQTT.ini` beside the EXE. Subscription changes save immediately; connection fields save after about 500 ms of idle typing; window dimensions save when resizing ends; the splitter position saves about 500 ms after release, restarting the delay if dragged again. Closing flushes pending edits. Pending deletions are excluded from saved subscriptions. Failed saves retain edits in memory, report the failure in the log and status bar, and retry every 5 seconds; a failed final save shows a dialog.
+TLS builds provide an optional **TLS SNI** field. Enter `mqtts://203.0.113.10:8883` as the URI and `broker.example.com` as SNI to connect to that IP while sending SNI and verifying the certificate against that DNS name, without resolving it. Replace the example IP with your actual broker IP. Leaving SNI blank uses the URI host; an IP host is verified against IP SANs and sends no DNS SNI. Enter only a DNS hostname, without a scheme, port or path; use Punycode for international names. This setting applies only to `mqtts://` and cannot be edited during a connection.
+
+Publishing supports QoS 0/1/2 and empty messages without requiring a subscription. The UI supports Chinese and English. The server URI, client ID, TLS SNI, subscriptions, and some display settings are automatically saved in `WIN32-MQTT.ini` beside the EXE. Subscription changes save immediately; connection fields save after about 500 ms of idle typing; window dimensions save when resizing ends; the splitter position saves about 500 ms after release, restarting the delay if dragged again. Closing flushes pending edits. Pending deletions are excluded from saved subscriptions. Failed saves retain edits in memory, report the failure in the log and status bar, and retry every 5 seconds; a failed final save shows a dialog.
 
 TLS builds use OpenSSL to verify the certificate chain and server identity, with TLS 1.2 as the minimum. Keep the EXE, OpenSSL DLLs, and `ca-bundle.pem` together, along with the license files. TCP-only builds support `mqtt://` only.
 

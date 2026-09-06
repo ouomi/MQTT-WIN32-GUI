@@ -13,6 +13,7 @@
 
 #if WIN32MQTT_ENABLE_TLS
 #include <openssl/ssl.h>
+#include "mqtt_tls_identity.hpp"
 #endif
 
 #include <array>
@@ -79,7 +80,7 @@ struct MqttSession::Impl {
         if (!disconnecting) {
             bool fits;
             if (connecting) {
-                fits = command.endpoint.host.size() <= 1024 && command.endpoint.port.size() <= 5 &&
+                fits = command.endpoint.host.size() <= 1024 && command.endpoint.port.size() <= 5 && command.endpoint.tls_server_name.size() <= 253 &&
                     MqttPacketFits({10, 2, command.first.size(), command.last_will ? 4u : 0u,
                         command.last_will ? command.last_will->topic.size() : 0u,
                         command.last_will ? command.last_will->payload.size() : 0u});
@@ -93,7 +94,7 @@ struct MqttSession::Impl {
         }
         // All string lengths were bounded above, so this addition cannot overflow.
         const auto bytes = command.first.size() + command.second.size() + command.endpoint.host.size() +
-            command.endpoint.port.size() + (command.last_will ? command.last_will->topic.size() + command.last_will->payload.size() : 0);
+            command.endpoint.port.size() + command.endpoint.tls_server_name.size() + (command.last_will ? command.last_will->topic.size() + command.last_will->payload.size() : 0);
         { std::lock_guard<std::mutex> lock(mutex);
           if (stopped.load()) return MqttAdmission::Stopped;
           if (disconnecting) {
@@ -266,7 +267,7 @@ struct MqttSession::Impl {
             transport = BIO_new_ssl(ssl_context, 1);
             SSL* ssl = nullptr;
             if (transport != nullptr) BIO_get_ssl(transport, &ssl);
-            if (transport == nullptr || ssl == nullptr || SSL_set_tlsext_host_name(ssl, endpoint.host.c_str()) != 1 || SSL_set1_host(ssl, endpoint.host.c_str()) != 1) { error = "unable to configure TLS hostname verification"; return false; }
+            if (transport == nullptr || ssl == nullptr || !ConfigureTlsIdentity(ssl, endpoint)) { error = "unable to configure TLS hostname verification"; return false; }
             // MQTT-C may compact its queue between SSL_write retries. The
             // retried bytes and length stay identical, but their address may move.
             SSL_set_mode(ssl, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);

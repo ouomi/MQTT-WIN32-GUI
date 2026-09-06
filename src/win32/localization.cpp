@@ -44,6 +44,10 @@ std::wstring_view Text(AppLanguage language, UiText text) {
         case UiText::LanguageChinese: return L"中文";
         case UiText::LanguageEnglish: return L"English";
         case UiText::ServerUri: return L"服务器地址：";
+        case UiText::TlsServerName: return L"TLS SNI：";
+        case UiText::TlsServerNameHint: return L"可选域名，用于 SNI 和证书校验；留空使用服务器地址";
+        case UiText::TlsBuildRequired: return L"需要 TLS 版本";
+        case UiText::InvalidTlsServerName: return L"SNI 请填写域名，不包含协议、端口或路径。国际化域名请使用 Punycode；留空使用服务器地址。";
         case UiText::ClientId: return L"客户端 ID：";
         case UiText::LastWill: return L"遗嘱消息";
         case UiText::LastWillEnabled: return L"已启用";
@@ -111,6 +115,10 @@ std::wstring_view Text(AppLanguage language, UiText text) {
     case UiText::LanguageChinese: return L"中文";
     case UiText::LanguageEnglish: return L"English";
     case UiText::ServerUri: return L"Server URI:";
+    case UiText::TlsServerName: return L"TLS SNI:";
+    case UiText::TlsServerNameHint: return L"Optional name for SNI and certificate checks; blank uses server address";
+    case UiText::TlsBuildRequired: return L"Requires a TLS-enabled build";
+    case UiText::InvalidTlsServerName: return L"Enter an SNI DNS hostname without a scheme, port or path. Use Punycode for international names; leave blank to use the server address.";
     case UiText::ClientId: return L"Client ID:";
     case UiText::LastWill: return L"Last Will";
     case UiText::LastWillEnabled: return L"enabled";

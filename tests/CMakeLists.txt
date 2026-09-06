@@ -96,3 +96,8 @@ if(TARGET OpenSSL::SSL)
         WIN32MQTT_TEST_TRACK_LOCKS=1 MQTT_USE_BIO=1)
     target_link_libraries(win32mqtt_tls_tests PRIVATE OpenSSL::SSL OpenSSL::Crypto)
 endif()
+
+if(TARGET OpenSSL::SSL)
+    add_mqtt_test(tls_identity transport mqtt_tls_identity_tests.cpp ../src/mqtt/mqtt_endpoint.cpp)
+    target_link_libraries(win32mqtt_tls_identity_tests PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+endif()

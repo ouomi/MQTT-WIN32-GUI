@@ -93,11 +93,18 @@ bool ValidSettingsServerUri(std::wstring_view value) {
     return utf8 && ParseMqttEndpoint(*utf8).Succeeded();
 }
 
+bool ValidSettingsTlsServerName(std::wstring_view value) {
+    const auto utf8 = SettingsToUtf8(value);
+    return utf8 && ValidTlsServerName(*utf8);
+}
+
 std::wstring ValidateSettings(const AppSettings& settings) {
     if (settings.language != AppLanguage::Chinese && settings.language != AppLanguage::English)
         return L"[Display] Language: expected Chinese or English";
     if (!ValidSettingsServerUri(settings.server_uri))
         return L"[Connection] ServerUri: expected an empty value or mqtt://host[:port] / mqtts://host[:port]";
+    if (!ValidSettingsTlsServerName(settings.tls_server_name))
+        return L"[Connection] TlsServerName: expected an empty value or ASCII DNS hostname (use Punycode for IDNs)";
     if (!ValidSettingsText(settings.client_id))
         return L"[Connection] ClientId: invalid Unicode, control characters, or more than 4088 UTF-8 bytes";
     for (const auto& entry : {std::pair{L"Width", settings.window_width},
@@ -180,6 +187,9 @@ std::wstring ParseSettingsDocument(std::wstring_view text, AppSettings& settings
     else if (failure.empty()) failure = L"Display/Language: expected Chinese or English";
     parsed.server_uri = take(L"Connection/ServerUri");
     parsed.client_id = take(L"Connection/ClientId");
+    // Optional for compatibility with files written before SNI overrides existed.
+    if (values.count(L"Connection/TlsServerName"))
+        parsed.tls_server_name = take(L"Connection/TlsServerName");
     number(L"Window/Width", 32767, parsed.window_width);
     number(L"Window/Height", 32767, parsed.window_height);
     number(L"Window/SubscriptionPanelWidth", 32767, parsed.subscription_panel_width);
@@ -204,7 +214,8 @@ std::optional<std::string> SerializeSettingsDocument(const AppSettings& settings
     if (!ValidateSettings(settings).empty()) return std::nullopt;
     std::wstring text = L"[Display]\r\nLanguage=";
     text += settings.language == AppLanguage::Chinese ? L"Chinese" : L"English";
-    text += L"\r\n[Connection]\r\nServerUri=" + settings.server_uri + L"\r\nClientId=" + settings.client_id;
+    text += L"\r\n[Connection]\r\nServerUri=" + settings.server_uri + L"\r\nClientId=" + settings.client_id +
+            L"\r\nTlsServerName=" + settings.tls_server_name;
     text += L"\r\n[Window]\r\nWidth=" + std::to_wstring(settings.window_width) +
             L"\r\nHeight=" + std::to_wstring(settings.window_height) +
             L"\r\nSubscriptionPanelWidth=" + std::to_wstring(settings.subscription_panel_width);

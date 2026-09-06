@@ -21,7 +21,9 @@ template<class F> void wait(F f) {
 }
 class Broker : public MqttSessionBackend {
 public:
-    bool Open(const MqttEndpoint&, const std::function<bool()>& cancelled, std::string&) override {
+    MqttEndpoint opened_endpoint; // Read only after Stop joins the worker.
+    bool Open(const MqttEndpoint& endpoint, const std::function<bool()>& cancelled, std::string&) override {
+        opened_endpoint = endpoint;
         ++opens;
         while (block_open && !cancelled()) std::this_thread::sleep_for(1ms);
         return !cancelled();
@@ -225,8 +227,11 @@ int main() {
     check(callbacks == stopped_callbacks, "no callbacks after Stop joins");
     auto pending = std::make_shared<Broker>(); pending->block_open = true;
     MqttSession cancel([](MqttEvent) {}, pending);
-    cancel.Connect({"localhost", "1883", false}, "cancel");
+    cancel.Connect({"203.0.113.10", "8883", true, "broker.example.com"}, "cancel");
     wait([&] { return pending->opens > 0; });
     cancel.Disconnect(); cancel.Stop();
+    check(pending->opened_endpoint.host == "203.0.113.10" &&
+          pending->opened_endpoint.tls_server_name == "broker.example.com",
+          "connection queue preserves destination IP separately from TLS identity");
     std::cout << "Production session worker tests passed\n";
 }

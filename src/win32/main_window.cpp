@@ -27,7 +27,7 @@ constexpr wchar_t kWindowClass[] = L"WIN32-MQTT.MainWindow";
 constexpr int kControlGap = 8;
 constexpr int kControlMargin = 12;
 constexpr int kClassicPanelInset = 4;
-constexpr int kConnectionContentHeight = 54;
+constexpr int kConnectionContentHeight = 85;
 constexpr int kMinimumPanelWidth = 300;
 constexpr int kPanelGap = 16;
 constexpr int kPublishContentHeight = 126;
@@ -176,10 +176,12 @@ struct MainWindow::Impl {
         // Never persist an incomplete edit that strict startup validation would reject.
         const auto server_uri = connection.ServerUri();
         const auto client_id = connection.ClientId();
+        const auto tls_server_name = connection.TlsServerName();
         if (ValidSettingsServerUri(server_uri)) settings.server_uri = server_uri;
         if (ValidSettingsText(client_id)) settings.client_id = client_id;
+        if (ValidSettingsTlsServerName(tls_server_name)) settings.tls_server_name = tls_server_name;
         return {language, settings.server_uri, settings.client_id, subscriptions.Snapshot(),
-                settings.window_width, settings.window_height, subscription_panel_width};
+                settings.window_width, settings.window_height, subscription_panel_width, settings.tls_server_name};
     }
 
     void ScheduleSettingsSave(std::uint64_t delay = 0) {
@@ -223,7 +225,7 @@ struct MainWindow::Impl {
 
     void CreateControls() {
         connection.Create(window, language, connection_state, settings.server_uri,
-                          settings.client_id);
+                          settings.client_id, settings.tls_server_name);
         subscriptions.Create(window, language, settings.subscriptions);
         messages.Create(window, language);
         publisher.Create(window, language);
@@ -391,7 +393,7 @@ struct MainWindow::Impl {
         }
 
         const std::string server_uri = WideToUtf8(request.server_uri);
-        const MqttEndpointParseResult parsed = ParseMqttEndpoint(server_uri);
+        MqttEndpointParseResult parsed = ParseMqttEndpoint(server_uri);
         if (!parsed.Succeeded()) {
             const std::wstring detail = Utf8ToWide(MqttEndpointErrorMessage(parsed.error));
             const std::wstring message = std::wstring(Text(language, UiText::InvalidServerUri)) +
@@ -400,6 +402,15 @@ struct MainWindow::Impl {
                                   Text(language, UiText::ApplicationTitle).data(),
                                   MB_OK | MB_ICONINFORMATION);
             return;
+        }
+
+        if (parsed.endpoint.secure) {
+            if (!ValidSettingsTlsServerName(request.tls_server_name)) {
+                ShowClassicMessageBox(window, Text(language, UiText::InvalidTlsServerName).data(),
+                                      Text(language, UiText::ApplicationTitle).data(), MB_OK | MB_ICONINFORMATION);
+                return;
+            }
+            parsed.endpoint.tls_server_name = WideToUtf8(request.tls_server_name);
         }
 
         const LastWillSettings will_settings = will.Settings();
@@ -712,7 +723,7 @@ LRESULT CALLBACK MainWindow::WindowProc(HWND window, UINT message, WPARAM wparam
     case WM_COMMAND: {
         const WORD id = LOWORD(wparam);
         const WORD notification = HIWORD(wparam);
-        if ((id == IDC_SERVER_URI || id == IDC_CLIENT_ID) && notification == EN_CHANGE) {
+        if ((id == IDC_SERVER_URI || id == IDC_CLIENT_ID || id == IDC_TLS_SERVER_NAME) && notification == EN_CHANGE) {
             app.ScheduleSettingsSave(500);
             return 0;
         }

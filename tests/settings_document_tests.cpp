@@ -11,6 +11,7 @@ static void check(bool value, const char* message) {
 int main() {
     AppSettings settings{AppLanguage::English, L"mqtt://localhost:1883", L" client=\"中文\"\\id ",
         {{L" \"设备\"/温度;=\\path ", false}, {L"设备/+", true}}, 900, 600, 380};
+    settings.tls_server_name = L"broker.example.com";
     const auto bytes = SerializeSettingsDocument(settings);
     check(bytes.has_value(), "serialize valid settings");
     check(bytes->find("ServerUri=mqtt://localhost:1883") != std::string::npos,
@@ -39,6 +40,14 @@ int main() {
         text.replace(pos, from.size(), to);
         return text;
     };
+    check(ParseSettingsDocument(replace(L"TlsServerName=broker.example.com\r\n", L""), parsed).empty() &&
+          parsed.tls_server_name.empty(), "old settings without SNI load with automatic identity");
+    auto changed_sni = settings;
+    changed_sni.tls_server_name = L"other.example.com";
+    check(!SameSettings(settings, changed_sni), "SNI changes trigger autosave");
+    reject(replace(L"TlsServerName=broker.example.com", L"TlsServerName=broker.example.com:8883"),
+           "SNI with port rejected");
+    reject(replace(L"TlsServerName=broker.example.com", L"TlsServerName=192.0.2.1"), "SNI IP rejected");
     reject(L"", "empty document rejected");
     reject(L"[Unexpected]\nX=1\n" + *document, "unknown section rejected");
     reject(*document + L"Unknown=1\n", "unknown key rejected");

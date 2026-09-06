@@ -9,6 +9,7 @@ struct MqttEndpoint {
     std::string host;
     std::string port;
     bool secure{false};
+    std::string tls_server_name{}; // Empty uses host; otherwise SNI and certificate identity.
 };
 
 enum class MqttEndpointError {
@@ -33,6 +34,8 @@ struct MqttEndpointParseResult {
         return error == MqttEndpointError::None;
     }
 };
+
+bool ValidTlsServerName(std::string_view name);
 
 MqttEndpointParseResult ParseMqttEndpoint(std::string_view uri);
 std::string FormatMqttEndpointUri(const MqttEndpoint& endpoint);

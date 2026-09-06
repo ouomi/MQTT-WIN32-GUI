@@ -13,6 +13,29 @@ MqttEndpointParseResult Failure(MqttEndpointError error) {
 
 } // namespace
 
+bool ValidTlsServerName(std::string_view name) {
+    if (name.empty()) return true;
+    if (name.size() > 253) return false;
+    bool only_digits_and_dots = true;
+    std::size_t label_length = 0;
+    char previous = 0;
+    for (char c : name) {
+        const bool digit = c >= '0' && c <= '9';
+        const bool letter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+        if (c == '.') {
+            if (!label_length || previous == '-') return false;
+            label_length = 0;
+        } else {
+            if (!digit && !letter && c != '-') return false;
+            if (!label_length && c == '-') return false;
+            if (++label_length > 63) return false;
+            if (!digit) only_digits_and_dots = false;
+        }
+        previous = c;
+    }
+    return label_length && previous != '-' && !only_digits_and_dots;
+}
+
 MqttEndpointParseResult ParseMqttEndpoint(std::string_view uri) {
     constexpr std::string_view kMqtt = "mqtt://";
     constexpr std::string_view kMqtts = "mqtts://";

@@ -16,6 +16,7 @@ struct AppSettings {
     int window_width{};
     int window_height{};
     int subscription_panel_width{}; // Zero uses the default equal split.
+    std::wstring tls_server_name{};
 };
 
 struct AppSettingsLoadResult {
