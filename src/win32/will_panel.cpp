@@ -11,7 +11,8 @@ namespace {
 constexpr wchar_t kWindowClass[] = L"Win32MqttLastWillWindow";
 }
 
-void WillPanel::Create(HWND parent, AppLanguage language, std::function<void()> test) {
+void WillPanel::Create(HWND parent, AppLanguage language, std::function<void()> test,
+                       std::function<void()> relayout) {
     language_ = language;
     test_callback_ = std::move(test);
     toggle_ = AddButton(parent, IDC_WILL_TOGGLE, L"", WS_TABSTOP);
@@ -51,6 +52,22 @@ void WillPanel::Create(HWND parent, AppLanguage language, std::function<void()> 
     result_ = AddText(window_, 60015, L"");
     UpdateText(language, MqttConnectionState::Disconnected);
     LayoutWindow();
+    relayout_callback_ = std::move(relayout);
+}
+
+int WillPanel::ButtonWidth() const {
+    constexpr int horizontal_padding = 24;
+    const std::wstring text = ControlText(toggle_);
+    HDC dc = GetDC(toggle_);
+    if (!dc) return 150;
+    const HFONT font = reinterpret_cast<HFONT>(SendMessageW(toggle_, WM_GETFONT, 0, 0));
+    const HGDIOBJ previous = font ? SelectObject(dc, font) : nullptr;
+    SIZE size{};
+    const BOOL measured = GetTextExtentPoint32W(dc, text.c_str(),
+                                               static_cast<int>(text.size()), &size);
+    if (previous) SelectObject(dc, previous);
+    ReleaseDC(toggle_, dc);
+    return measured ? static_cast<int>(size.cx) + horizontal_padding : 150;
 }
 
 void WillPanel::Layout(const RECT& bounds) const {
@@ -80,7 +97,10 @@ void WillPanel::UpdateText(AppLanguage language, MqttConnectionState state) cons
     state_ = state;
     std::wstring title(Text(language, UiText::LastWill));
     if (IsEnabled()) title += L" (" + std::wstring(Text(language, UiText::LastWillEnabled)) + L")";
-    SetWindowTextW(toggle_, title.c_str());
+    if (ControlText(toggle_) != title) {
+        SetWindowTextW(toggle_, title.c_str());
+        if (relayout_callback_) relayout_callback_();
+    }
     if (!window_) return;
     SetWindowTextW(window_, Text(language, UiText::LastWill).data());
     SetWindowTextW(enabled_, Text(language, UiText::EnableLastWill).data());

@@ -236,6 +236,10 @@ struct MainWindow::Impl {
                 connection_state = MqttConnectionState::Disconnecting;
                 UpdateConnectionUi();
             }
+        }, [this] {
+            RECT bounds{};
+            GetClientRect(window, &bounds);
+            Layout(bounds.right, bounds.bottom);
         });
         messages.Append(std::wstring(Text(language, UiText::InitialMessage)));
         UpdateConnectionUi();
@@ -260,7 +264,7 @@ struct MainWindow::Impl {
             if (!splitter_only) connection.Layout(InsetPanel(panels.connection));
             subscriptions.Layout(InsetPanel(panels.subscriptions));
             messages.Layout(InsetPanel(panels.messages));
-            will.Layout(publisher.Layout(InsetPanel(panels.publisher)));
+            will.Layout(publisher.Layout(InsetPanel(panels.publisher), will.ButtonWidth()));
         } // Commit all changed control positions before repainting.
         // Child invalidation is handled by their geometry changes. Allow paint
         // requests to coalesce instead of erasing all controls on every move.

@@ -17,7 +17,9 @@ struct LastWillSettings {
 
 class WillPanel {
 public:
-    void Create(HWND parent, AppLanguage language, std::function<void()> test);
+    void Create(HWND parent, AppLanguage language, std::function<void()> test,
+                std::function<void()> relayout);
+    int ButtonWidth() const;
     void Layout(const RECT& bounds) const;
     void UpdateText(AppLanguage language, MqttConnectionState state) const;
     bool HandleCommand(WORD id, WORD notification);
@@ -43,6 +45,7 @@ private:
     HWND test_hint_{};
     HWND result_{};
     std::function<void()> test_callback_;
+    std::function<void()> relayout_callback_;
     mutable AppLanguage language_{};
     mutable MqttConnectionState state_{};
 };

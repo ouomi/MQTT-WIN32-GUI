@@ -25,7 +25,7 @@ class PublishPanel {
 public:
     void Create(HWND parent, AppLanguage language);
     // Lay out publishing controls and return the Last Will button bounds.
-    RECT Layout(const RECT& bounds) const;
+    RECT Layout(const RECT& bounds, int last_will_button_width) const;
     void UpdateText(AppLanguage language) const;
     void SetConnected(bool connected) const;
     void SetTopics(const std::vector<std::wstring>& topics) const;
