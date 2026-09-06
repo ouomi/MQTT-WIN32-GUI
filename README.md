@@ -32,6 +32,7 @@ TLS 版使用 OpenSSL 验证证书链和服务器身份，最低 TLS 1.2。请�
 准备好依赖后，可使用一键脚本（Linux/Bash）：
 
 ```sh
+export VCPKG_ROOT=/opt/vcpkg
 ./scripts/build.sh                            # 默认：64 位 TCP 版
 ./scripts/build.sh mingw32-notls-release       # 32 位 TCP 版
 ./scripts/build.sh mingw64-tls-release -j 4    # 64 位 TLS 版，4 个并行任务

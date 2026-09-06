@@ -79,7 +79,7 @@ PanelBounds CalculatePanelBounds(HWND status, int width, int height,
         width - kControlMargin,
         kControlMargin + kConnectionContentHeight + 2 * kClassicPanelInset,
     };
-    const int work_area_bottom = client_height;
+    const int work_area_bottom = client_height - kControlMargin;
     panels.subscriptions = {kControlMargin, panel_top, splitter_left, work_area_bottom};
     panels.splitter = {splitter_left, panel_top, right_x, work_area_bottom};
     panels.publisher = {right_x, work_area_bottom - publisher_height,
@@ -229,7 +229,7 @@ struct MainWindow::Impl {
         publisher.Create(window, language);
         publisher.SetTopics(subscriptions.ActiveTopics());
         status = AddControl(STATUSCLASSNAMEW, SBARS_SIZEGRIP | WS_CLIPSIBLINGS, IDC_STATUS,
-                            window, WS_EX_STATICEDGE);
+                            window);
         will.Create(window, language, [this] {
             if (connection_state != MqttConnectionState::Connected || !will.Settings().enabled) return;
             if (ReportAdmission(mqtt->SimulateAbnormalDisconnect())) {
