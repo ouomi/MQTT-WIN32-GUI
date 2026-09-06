@@ -67,6 +67,12 @@ void UseClassicControlTheme(HWND control) {
 void UseClassicWindowFrame(HWND window) {
     UseClassicControlTheme(window);
 
+    // Request a classic non-client frame for this window. If unsupported,
+    // leave frame rendering to the system without preventing startup.
+    const DWMNCRENDERINGPOLICY rendering_policy = DWMNCRP_DISABLED;
+    DwmSetWindowAttribute(window, DWMWA_NCRENDERING_POLICY, &rendering_policy,
+                         sizeof(rendering_policy));
+
     const int corner_preference = kDwmcpDoNotRound;
     DwmSetWindowAttribute(window, kDwmwaWindowCornerPreference, &corner_preference,
                           sizeof(corner_preference));
