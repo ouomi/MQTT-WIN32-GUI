@@ -2,6 +2,12 @@ cmake_minimum_required(VERSION 3.20)
 
 project(win32mqtt VERSION 0.1.0 LANGUAGES C CXX)
 
+# Sources are UTF-8, including Chinese UI strings and test expectations.
+# Apply this before adding tests so MSVC does not use the host ANSI code page.
+if(MSVC)
+    add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:/utf-8>")
+endif()
+
 include(CTest)
 
 option(WIN32MQTT_BUILD_APP "Build the Windows GUI application" ${WIN32})
